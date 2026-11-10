@@ -19,9 +19,8 @@ CITY_MATH_ES = 60
 # A note on that year's scores, next to them on the map and the school pages; "" for none. Spring 2026: grades 3-5
 # ELA jumped in 2025 (the state lowered the grade 3, 4 and 6 cut scores) and fell back in 2026 to about its 2023-24
 # level (citywide grade 3: 2024 ~46%, 2025 58%, 2026 44%). TESTS_NOTE_SHORT goes on each elementary school's card.
-TESTS_NOTE = ("ELA scores jumped across New York State in 2025 and fell back in 2026, mostly in grades 3–5. "
-              "Compare schools with each other rather than with last year.")
-TESTS_NOTE_SHORT = "ELA jumped statewide in 2025, then fell back"
+TESTS_NOTE = ""
+TESTS_NOTE_SHORT = ""
 # Pre-K and 3-K seats and applicants: the DOE's Local Law 72 admissions report (data/prek.json)
 PREK_LABEL = "fall 2025"
 # MySchools directories (data/ms_directory.json, hs_directory.json, k_priority.json): the admissions round their

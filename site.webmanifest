@@ -1,7 +1,7 @@
 {
-  "name": "NYC School Zones",
+  "name": "Seattle School Zones (test)",
   "short_name": "School Zones",
-  "description": "Every NYC elementary, middle and high school zone on one map.",
+  "description": "Seattle Public Schools attendance areas on one map. A test build.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

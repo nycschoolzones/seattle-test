@@ -1,5 +1,30 @@
 # Code map
 
+## What changed from the NYC code (read this first)
+
+This repo is nycschoolzones/nycschoolzones v1.67.0 cut down to run on Seattle's data. Everything below this section is
+the NYC code map. It still describes `src/template.html` well, but the build scripts it names are gone and much of the
+template's NYC-only code is switched off rather than removed.
+
+**New or rewritten**
+
+- `scripts/fetch_seattle.py`: all the data, from Seattle Public Schools' ArcGIS services and the state's Report Card data. `name_key()`/`ALIASES` match schools between the two by name.
+- `scripts/build.py`: only the generic parts of the NYC build (`prepare_zones`, `fill_settings`, `head_tags`, `write_page`) plus a short `main()`. `option_rows()` writes option schools as `NZ` rows; a Highly Capable school carries the flag NYC used for citywide G&T (`o.gt`, the star marker).
+- `CITY` (top of the template's script): map center, `hsTests` (high schools use test scores, not graduation and SAT), `pages` (no school pages), the address lookup link, the geocoder and its bounding box.
+- Basemap: King County's street tiles, one layer with the labels in it. Dark mode is a CSS filter (`.base-tiles`). `labelTiles` is an empty layer and `syncParks` does nothing, so the callers didn't have to change.
+- `geo()`: King County's address locator. It has no autocomplete, so both the as-you-type list and Find use the same request, filtered to `CITY.box`.
+- `LEVEL_TXT`, the side panel, the opening notice, `nzPriority`/`nzKind` and the card's links: Seattle wording.
+- `labelName()`: schools are labeled by name. NYC's `prefixOf()` ("PS 321") is gone.
+- `addrHtml()`: the address as the district writes it (city, state and ZIP included).
+- Link hashes take any numeric id (`#es-201`).
+- `booted`: a zoom during startup no longer calls `restyle` before it exists (this surfaced when the first `fitBounds` changed the zoom).
+
+**Still in the template, switched off** (hidden controls, empty data): quality ratings (`R`, `rateSec`), programs and Color by G&T / dual language / pre-K / special ed / screened, admissions (`P`, `KP`, `A`, `admSec`, `esAdmHtml`), charters (`CH`, `CHX`, `chBlock`), districts (`DIST`, `buildDistricts`, `distPage`), high school outcomes (`O`, `Q`, `outSec`), demographics, class size, building use, co-location, accessibility, our own street layers (`ST`, `LS`), shared-zone notes (`zoneKind`, `kindText`), `pageUrl`. `settings.py` keeps the NYC labels these read.
+
+**Removed**: `pages.py`, `neighborhoods.py`, `fetch_data.py`, `streets.py`, `release.sh`, `scripts/browser/`, the release workflow, the school, district and neighborhood pages, the sitemap, and all NYC data.
+
+**Not done**: `data/geo_zones.json` is downloaded but not drawn. `brand/`, `icons/` and `preview.png` are the NYC site's.
+
 Where things live, so you can find them without reading all of `src/template.html`. Names below are functions and
 constants to search for. Line numbers drift, so search by name instead. Keep this file current (see AGENTS.md).
 

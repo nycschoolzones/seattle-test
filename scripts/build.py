@@ -1,30 +1,25 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 NYC School Zones
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Build index.html from src/template.html and the files in data/.
+"""Build index.html from src/template.html and the files in data/ (written by scripts/fetch_seattle.py).
 
 Uses only the Python standard library. Run from the repo root:
 
-    python3 scripts/build.py                      # index.html + assets/ + school and district pages + sitemap (what GitHub Pages serves)
+    python3 scripts/build.py                         # index.html + assets/
     python3 scripts/build.py --standalone out.html   # one self-contained file that also opens offline
-    python3 scripts/build.py --no-pages              # skip the school pages, district pages and sitemap (faster)
-    python3 scripts/build.py --pages 15K321,02M475   # only these school pages (no district pages or sitemap)
 
 Steps:
-  1. Load zone boundaries (data/elem_zones.json).
-  2. Give each zone a "neighbor color" (0-5) so adjacent zones differ in the
-     Plain view, a label point inside the zone, and an approximate area.
-  3. Attach state test results (data/state_tests.json; the Snapshot's for schools it lacks),
-     School Quality Snapshot ratings (data/snapshot_ratings.json) and
-     the street overlays (data/streets.json, data/local_streets.json).
-  4. Inline everything into the template and write index.html.
+  1. Load each level's attendance areas (data/elem_zones.json, ms_zones.json, hs_zones.json).
+  2. Give each zone a "neighbor color" so adjacent zones differ, a label point inside the zone, and an
+     approximate area.
+  3. Add the option schools (data/option_schools.json) as schools without a zone, and the school results
+     (data/results.json) when that file is there.
+  4. Inline the elementary data into the template and write index.html; middle and high school go to assets/.
 """
 import collections
 import json
-import math
 import re
 import os
-import sys
 from html import escape
 
 import settings
@@ -32,17 +27,15 @@ import settings
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "data")
 
-# GoatCounter visitor counts (https://www.goatcounter.com). Put your site code here,
-# e.g. "nycschoolmaps" for nycschoolmaps.goatcounter.com. Leave empty to turn it off.
-GOATCOUNTER_CODE = "nycschoolzones"
+# GoatCounter visitor counts (https://www.goatcounter.com). Put your site code here. Leave empty to turn it off.
+GOATCOUNTER_CODE = ""
 
-# Link previews (Facebook, iMessage, Reddit, Slack, X). preview.png is made by scripts/make_preview.py.
-SITE_URL = "https://nycschoolzones.com/"
-SITE_NAME = "NYC School Zones"
-# The map's browser-tab title, and the headline Google shows for the home page
-SITE_TITLE = "NYC School Zone Map: Elementary, Middle & High School Zones"
-SITE_DESCRIPTION = ("Every NYC elementary (kindergarten), middle and high school zone on one map, colored by DOE "
-                    "School Quality ratings and state test scores. Free for parents.")
+SITE_URL = "https://seattle.schoolzones.org/"
+SITE_NAME = "Seattle School Zones"
+# The map's browser-tab title
+SITE_TITLE = "Seattle School Zone Map: Elementary, Middle & High School Attendance Areas (test)"
+SITE_DESCRIPTION = ("Every Seattle Public Schools elementary, middle and high school attendance area on one map. "
+                    "An experiment built from the NYC School Zones code.")
 
 
 def fill_settings(template):
@@ -110,284 +103,7 @@ def point_in_ring(pt, ring):
 
 DIRECTIONS = {"N", "S", "E", "W", "NORTH", "SOUTH", "EAST", "WEST"}
 
-
-def zip_key(addr):
-    """House number and street name, the way zipKey in the template reads them: "250 WEST 127 STREET" -> "250 127", "348A DEISIUS STREET" -> "348 DEISIUS"."""
-    w = re.sub(r"(\d)(ST|ND|RD|TH)\b", r"\1", str(addr).upper().replace(",", " ")).split()
-    return " ".join([re.sub(r"[A-Z]+$", "", w[0]) if w else "", next((x for x in w[1:] if x not in DIRECTIONS), "")])
-
-
-def school_fixes():
-    return load("school_fixes.json") if os.path.exists(os.path.join(DATA, "school_fixes.json")) else {}
-
-
-def drop_closed(z):
-    """Take schools the DOE has closed (school_fixes.json "closed") out of a zone file that still lists them. A shared
-    zone then belongs to the school that's left; a zone with no school left becomes a "no zoned school" area, in the
-    DOE's own words for those."""
-    closed = set(school_fixes().get("closed", {}))
-    for f in z["features"]:
-        p = f["properties"]
-        if closed & set(p["dbns"]):
-            p["dbns"] = [x for x in p["dbns"] if x not in closed]
-            if len(p["dbns"]) <= 1:
-                p["label"] = None
-            if not p["dbns"]:
-                p["remarks"] = f"Zoned to District {int(p['dist'])}. No zoned school. Contact 718-935-2009 for more information."
-            elif (p.get("remarks") or "").startswith("Shared Zone") and len(p["dbns"]) == 1:
-                p["remarks"] = None
-    for dbn in closed:
-        z["schools"].pop(dbn, None)
-
-
-def apply_school_fixes(d):
-    """Hand-checked fixes from data/school_fixes.json (closed schools are dropped earlier, in prepare_zones):
-    - "moved": schools in a building MySchools and the Snapshot don't show yet get the new address and point
-      everywhere the school appears, and no facts about the old building (building use U, accessibility AC,
-      shared building CO, including other schools' CO lists).
-    - "points": a better point for a school whose address is right, or none (null) for a virtual school, which then
-      has a card and a page but no marker.
-    - "entry": middle schools that take new students in a grade other than 6 (MS.EG, dbn -> grade); the card and the
-      school page name that grade instead of showing grade 6 seats."""
-    fixes = school_fixes()
-    moved, points = fixes.get("moved", {}), fixes.get("points", {})
-    levels = [d] + [d[k] for k in ("MS", "HS") if k in d]
-    for dbn, m in {**points, **moved}.items():
-        for lv in levels:
-            if dbn in lv.get("schools", {}):
-                lv["schools"][dbn].update(lat=m["lat"], lon=m["lon"], **({"a": m["a"]} if "a" in m else {}))
-            for r in lv.get("NZ", []) + lv.get("CH", []):
-                if r[0] == dbn:
-                    r[3], r[4] = m["lat"], m["lon"]
-                    if "a" in m:
-                        r[2] = m["a"]
-    for dbn, m in moved.items():
-        for lv in levels:
-            for k in ("R", "CHR"):
-                if dbn in lv.get(k, {}):
-                    lv[k][dbn][1] = m["a"]
-            for k in ("U", "AC"):
-                lv.get(k, {}).pop(dbn, None)
-            co = lv.get("CO", {})
-            co.pop(dbn, None)
-            for other in list(co):
-                co[other] = [x for x in co[other] if x[0] != dbn]
-                if not co[other]:
-                    del co[other]
-    # reminders once the city's files have caught up
-    listed = {r[0]: r[2] for r in load("ms_directory.json")} if os.path.exists(os.path.join(DATA, "ms_directory.json")) else {}
-    for dbn, m in moved.items():
-        if dbn in listed and zip_key(listed[dbn]) == zip_key(m["a"]):
-            print(f"school_fixes.json: MySchools now lists {dbn} at {listed[dbn]}; its moved entry can go")
-    in_zones = set()
-    for name in ("elem_zones.json", "ms_zones.json", "hs_zones.json"):
-        if os.path.exists(os.path.join(DATA, name)):
-            in_zones |= {x for f in load(name)["features"] for x in f["properties"]["dbns"]} | set(load(name)["schools"])
-    for dbn in sorted(set(fixes.get("closed", {})) - in_zones):
-        print(f"school_fixes.json: Find a School no longer lists {dbn}; its closed entry can go")
-    entry = fixes.get("entry", {})
-    if entry and "MS" in d:
-        d["MS"]["EG"] = {dbn: x["grade"] for dbn, x in entry.items()}
-        for dbn in entry:
-            if any(p[2] or p[3] for p in d["MS"].get("P", {}).get(dbn, [])):
-                print(f"school_fixes.json: MySchools now lists grade 6 seats for {dbn}; check its entry grade")
-    print(f"school_fixes.json: {len(moved)} moved, {len(points)} points, {len(fixes.get('closed', {}))} closed, {len(entry)} entry")
-
-
-def add_grades(d):
-    """d["G"] = {dbn: "0K,01,..."}: the grades each district school on the map teaches this year, from LCGMS
-    (zips.json "grades"), for every card and school page. The zone files' grade lists (schools[dbn]["g"]) are from the
-    2019-20 location file and only cover zoned schools; the map and pages use them when LCGMS doesn't list a school.
-    Charters keep theirs in CHX."""
-    if not os.path.exists(os.path.join(DATA, "zips.json")):
-        return
-    lcgms = load("zips.json").get("grades", {})
-    levels = [d] + [d[k] for k in ("MS", "HS") if k in d]
-    shown = set()
-    for lv in levels:
-        shown |= set(lv.get("schools", {})) | {r[0] for r in lv.get("NZ", [])} | set(lv.get("R", {}))
-    d["G"] = {dbn: lcgms[dbn] for dbn in sorted(shown) if dbn in lcgms and not dbn.startswith("84")}
-    print(f"grades: {len(d['G'])} schools from LCGMS")
-
-
-def fix_addresses(d):
-    """Check school addresses against the DOE's live location list (zips.json from LCGMS) and add the cards' ZIP codes.
-    - The Snapshot's address is last school year's. When it differs from LCGMS's and a current source (Find a School,
-      a MySchools directory) has LCGMS's, the school has moved or goes by its building's other street address: its
-      R and NZ rows get this year's address, which the map's cards and the school pages show.
-    - d["ZIP"] = {dbn: "ZIP house-number street"}: the card shows the ZIP next to an address with that house number
-      and street (zipKey in the template). "ZIP *" when the school's map point is on or next to LCGMS's tax lot,
-      so the same building under another entrance's address ("103 West 107 Street" for 104 West 108 Street) gets
-      it too. A school LCGMS doesn't list (a program LCGMS files under another DBN) takes the ZIP of the LCGMS
-      school at the same address."""
-    if not os.path.exists(os.path.join(DATA, "zips.json")):
-        return
-    lcgms = load("zips.json")["zips"]
-    levels = [d] + [d[k] for k in ("MS", "HS") if k in d]
-    points = collections.defaultdict(list)
-    for lv in levels:
-        for dbn, s in lv.get("schools", {}).items():
-            points[dbn].append((s.get("lat"), s.get("lon")))
-        for r in lv.get("NZ", []) + lv.get("CH", []):
-            points[r[0]].append((r[3], r[4]))
-    # this year's addresses, straight from the files: the NZ rows above already carry the Snapshot's
-    current = collections.defaultdict(list)
-    for name in ("elem_zones.json", "ms_zones.json", "hs_zones.json"):
-        if os.path.exists(os.path.join(DATA, name)):
-            for dbn, s in load(name)["schools"].items():
-                current[dbn].append(s.get("a"))
-    for name in ("nonzoned_k.json", "ms_directory.json"):
-        if os.path.exists(os.path.join(DATA, name)):
-            for r in load(name):
-                current[r[0]].append(r[2])
-    if os.path.exists(os.path.join(DATA, "hs_directory.json")):
-        for s in load("hs_directory.json")["schools"]:
-            current[s["dbn"]].append(s["a"])
-
-    moved = set()
-
-    def check(dbn, addr):  # this year's address in place of addr, when LCGMS says the school moved, else None
-        if dbn not in lcgms or not addr or zip_key(addr) == zip_key(lcgms[dbn][0]):
-            return None
-        return next((a for a in current[dbn] if a and zip_key(a) == zip_key(lcgms[dbn][0])), None)
-    for lv in levels:
-        for R in (lv.get("R", {}), lv.get("CHR", {})):
-            for dbn, r in R.items():
-                now = check(dbn, r[1])
-                if now:
-                    moved.add(f"{dbn} {r[1]} -> {now}")
-                    r[1] = now
-        for r in lv.get("NZ", []):
-            now = check(r[0], r[2])
-            if now:
-                moved.add(f"{r[0]} {r[2]} -> {now}")
-                r[2] = now
-    if moved:
-        print(f"addresses: {len(moved)} schools get this year's address in place of the Snapshot's: {'; '.join(sorted(moved))}")
-
-    def near(dbn, lat, lon, m=200):
-        return lat is not None and any(a and b and math.hypot((a - lat) * 111320, (b - lon) * 84300) < m
-                                       for a, b in points[dbn])
-    by_addr = {(dbn[2], zip_key(a)): z for dbn, (a, z, *_) in lcgms.items()}
-    d["ZIP"] = {}
-    for dbn, (a, z, lat, lon) in lcgms.items():
-        if dbn not in points:  # no card on the map
-            continue
-        d["ZIP"][dbn] = f"{z} {'*' if near(dbn, lat, lon) else zip_key(a)}"
-    for dbn in sorted(set(current) - set(lcgms)):
-        if dbn not in points:  # no card on the map
-            continue
-        for a in current[dbn]:
-            z = a and by_addr.get((dbn[2], zip_key(a)))
-            if z:
-                d["ZIP"][dbn] = f"{z} {zip_key(a)}"
-                break
-    far = sorted(dbn for dbn, (a, z, lat, lon) in lcgms.items() if lat is not None and any(p[0] for p in points[dbn])
-                 and not near(dbn, lat, lon, 300))
-    if far:
-        print(f"addresses: {len(far)} schools' map points are over 300 m from their LCGMS tax lot: {', '.join(far)}")
-
-
-def dissolve(polygons):
-    """One zone's polygons as one, without the edges two pieces share (the city's files split some zones along a
-    street, like 02M297's). Edges cancel only where both pieces have the same vertices; pieces that don't touch stay
-    separate parts. Returns the polygon list, or None if the leftover edges don't close into rings."""
-    edges = collections.Counter()
-    for p in polygons:
-        for k, ring in enumerate(p):
-            pts = [tuple(c) for c in ring]
-            if (area_centroid(ring)[0] > 0) != (k == 0):  # outer rings counterclockwise, holes clockwise
-                pts.reverse()
-            for a, b in zip(pts, pts[1:]):
-                if a != b:
-                    edges[(a, b)] += 1
-    for (a, b) in list(edges):
-        n = min(edges[(a, b)], edges.get((b, a), 0))
-        if n > 0:
-            edges[(a, b)] -= n
-            edges[(b, a)] -= n
-    nxt = collections.defaultdict(list)
-    for (a, b), n in sorted(edges.items()):
-        if n > 0:
-            nxt[a] += [b] * n
-    rings = []
-    while nxt:
-        start = min(nxt)
-        ring, a = [start], start
-        while nxt.get(a):
-            b = nxt[a].pop()
-            if not nxt[a]:
-                del nxt[a]
-            ring.append(b)
-            a = b
-            if a == start:
-                break
-        if ring[-1] != start or len(ring) < 4:
-            return None
-        rings.append([list(c) for c in ring])
-    outers = [r for r in rings if area_centroid(r)[0] > 0]
-    out = [[r] for r in outers]
-    for h in (r for r in rings if area_centroid(r)[0] <= 0):
-        home = next((p for p in out if point_in_ring(h[0], p[0]) or point_in_ring(h[1], p[0])), None)
-        if home is None:
-            return None
-        home.append(h)
-    return out
-
-
-LOCATED_IN = re.compile(r"Zoned to (?:IS|JHS|MS|PS) \d+, located in Dist?rict \d+\.")
-
-
-def note_key(remarks):
-    """What a zone note says, for telling pieces apart: "Zoned to IS 96, located in District 21." (on the piece of a
-    zone that crosses into the next district, and true of the whole zone) counts as no note, and wording differences
-    ("P.S 122" and "PS 122", "IS 347 and IS 349, located in District 32, share a zone") don't count."""
-    if not remarks or LOCATED_IN.fullmatch(remarks.strip()):
-        return ""
-    return re.sub(r"[^a-z0-9]", "", re.sub(r", located in Dist?rict \d+", "", remarks).lower())
-
-
-def merge_split_zones(z):
-    """Join the pieces the city's file lists as separate zones with the same school(s) and the same note (by
-    note_key), so the map selects, outlines and labels the zone as one. The joined zone keeps a piece's note (the shortest
-    wording), so "located in District 21" still shows. Pieces whose note says something of their own ("also receive priority
-    to PS 344", "Zoned by address: 41-04 10th Street ...") stay separate, since the card shows the note."""
-    groups = collections.defaultdict(list)
-    for f in z["features"]:
-        p = f["properties"]
-        if p["dbns"]:
-            groups[json.dumps({**p, "remarks": note_key(p.get("remarks"))}, sort_keys=True)].append(f)
-    gone = set()
-    for fs in groups.values():
-        if len(fs) < 2:
-            continue
-        parts = [p for f in fs for p in polys(f["geometry"])]
-        joined = dissolve(parts)
-        if joined is None:
-            print(f"zones: {'/'.join(fs[0]['properties']['dbns'])} joined, but its pieces' shared edges stay drawn "
-                  "(dissolve() couldn't close the rings)")
-        parts = joined or parts
-        fs[0]["geometry"] = {"type": "Polygon", "coordinates": parts[0]} if len(parts) == 1 else \
-            {"type": "MultiPolygon", "coordinates": parts}
-        notes = [f["properties"].get("remarks") for f in fs if f["properties"].get("remarks")]
-        if notes:
-            fs[0]["properties"]["remarks"] = min(notes, key=lambda r: ("Disrict" in r, len(r)))
-        gone |= {id(f) for f in fs[1:]}
-    z["features"] = [f for f in z["features"] if id(f) not in gone]
-    # what's left split: pieces whose notes differ. Check new ones each year; a note that only rewords another
-    # (or is true of the whole zone) belongs in note_key().
-    split = collections.defaultdict(list)
-    for f in z["features"]:
-        if f["properties"]["dbns"]:
-            split["/".join(sorted(f["properties"]["dbns"]))].append(f["properties"].get("remarks") or "(no note)")
-    for k, notes in sorted(split.items()):
-        if len(notes) > 1:
-            print(f"zones: {k} stays in {len(notes)} pieces with different notes: " + " | ".join(notes))
-
-
 def prepare_zones(d):
-    drop_closed(d)
-    merge_split_zones(d)
     feats = d["features"]
 
     # Zones are neighbors if they share boundary vertices.
@@ -433,7 +149,8 @@ def head_tags():
     img = SITE_URL + "preview.png"
     return (
         f'<meta name="description" content="{desc}">\n'
-        f'<link rel="canonical" href="{url}">\n'
+        # a test build: keep it out of search results until it has a home of its own
+        '<meta name="robots" content="noindex">\n'
         '<link rel="icon" href="favicon.svg" type="image/svg+xml">\n'
         # Home-screen app: opens full screen when added from Safari's Share menu or Chrome's Install
         '<link rel="manifest" href="site.webmanifest">\n'
@@ -452,7 +169,6 @@ def head_tags():
         f'<meta property="og:image" content="{img}">\n'
         '<meta property="og:image:width" content="1200">\n'
         '<meta property="og:image:height" content="630">\n'
-        '<meta property="og:image:alt" content="Map of New York City elementary school zones colored from green to dark red by rating">\n'
         '<meta name="twitter:card" content="summary_large_image">\n'
         f'<meta name="twitter:title" content="{title}">\n'
         f'<meta name="twitter:description" content="{desc}">\n'
@@ -468,534 +184,47 @@ def goatcounter_tag():
             'async src="https://gc.zgo.at/count.js"></script>')
 
 
-def color_districts(dist):
-    """Give each district a color index (0-4) so no two neighbors match. Neighbors: districts with
-    boundary points within ~40 m of each other (the simplified outlines don't share exact vertices)."""
-    tol = 0.0004
-    cells = {}
-    for k, v in dist.items():
-        for r in v["r"]:
-            for x, y in r:
-                cells.setdefault((round(x / tol), round(y / tol)), set()).add(k)
-    nb = {k: set() for k in dist}
-    for (cx, cy), ks in cells.items():
-        near = set(ks)
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                near |= cells.get((cx + dx, cy + dy), set())
-        for k in ks:
-            nb[k] |= near - {k}
-    for k in sorted(dist, key=lambda k: -len(nb[k])):  # most-connected first
-        used = {dist[n].get("c") for n in nb[k]}
-        dist[k]["c"] = next(i for i in range(6) if i not in used)
+def option_rows(rows):
+    """Option schools as the map's rows for schools without a zone: [id, name, address, lat, lon, priority
+    districts (none here), district residents only (0), programs (none), kind flag (1 = highly capable)]."""
+    return [[r[0], r[1], r[2], r[3], r[4], [], 0, [], 1 if r[5] == "highly capable" else 0] for r in rows]
 
 
-def load_tests():
-    """State test results per school (every tested grade together) as [ELA tested, ELA proficient, Math tested,
-    Math proficient], from the DOE's results for settings.TESTS_YEAR (data/state_tests.json, fetch_data.py tests)."""
-    t = load("state_tests.json")
-    if t.get("year") != settings.TESTS_YEAR:
-        sys.exit(f"data/state_tests.json has {t.get('year')} results but settings.TESTS_YEAR is {settings.TESTS_YEAR}; "
-                 "run fetch_data.py tests")
-    return t["schools"]
+def level(name, option, results):
+    z = load(name)
+    prepare_zones(z)
+    out = {"schools": z["schools"], "features": z["features"], "NZ": option_rows(option)}
+    ids = set(z["schools"]) | {r[0] for r in option}
+    out["T"] = {k: results[k] for k in sorted(ids) if k in results}
+    return out, z
 
 
-def test_row(city, dbn, snap_t):
-    """A school's T row: its settings.TESTS_YEAR results when the DOE file has them, else its Snapshot scores
-    (snapshot_tests_row) with a trailing 1, so the map and pages label them with the older Snapshot year
-    (charter schools, which the DOE file leaves out, and the odd school missing from it). None without either."""
-    if dbn in city:
-        return city[dbn]
-    t = snapshot_tests_row(snap_t)
-    return t + [1] if t else None
-
-
-def hs_snapshot_rows(o, city_grad):
-    """One school's high school Snapshot values (hs_snapshot.json) -> (Q row or None, outcomes row or None).
-    Q: [average SAT, college & career readiness score, % in any advanced course, % in AP,
-        [CUNY 4-year, CUNY 2-year, NY public (SUNY etc.), NY private, out of state, for-profit, other] % of graduates,
-        AP subjects students passed]; outcomes: [4-year graduation %, college/career %, city graduation %]."""
-    def num(x):
-        try:
-            return float(str(x).split("/")[0].split(" (")[-1].rstrip("%)").lstrip("("))
-        except (ValueError, TypeError):
-            return None
-
-    def paren(x):  # "2776 (85%)" -> 85
-        m = re.search(r"\((<?)(\d+)%\)", str(x or ""))
-        return (0 if m.group(1) else int(m.group(2))) if m else None
-    DEST = ("coll_4yr", "coll_2yr", "coll_publ", "coll_priv", "coll_oost", "coll_prft", "other")
-    sat, ccr = num(o.get("avg_sat")), num(o.get("val_ccr_4yr_all"))
-    dest = [num(o.get(f"val_pct_cer_6mo_{k}_all")) for k in DEST]
-    aps, i = [], 1
-    while f"ccpc_co_{i}" in o:
-        nm = o[f"ccpc_co_{i}"] or ""
-        if nm.startswith("A.P.") and "Other" not in nm:
-            aps.append(nm[4:].strip())
-        i += 1
-    row = [int(sat) if sat else None, int(ccr) if ccr is not None else None,
-           paren(o.get("disp_str_advanced_enroll")), paren(o.get("disp_str_ap_enroll")),
-           [int(x) if x is not None else None for x in dest] if any(x is not None for x in dest) else None, aps]
-    g, c = num(o.get("val_grad_pct_4_all")), num(o.get("val_pct_cer_6mo_all"))
-    return (row if any(x is not None for x in row[:5]) or aps else None,
-            [int(g) if g is not None else None, int(c) if c is not None else None, city_grad]
-            if g is not None or c is not None else None)
-
-
-BORO_NAME = {"M": "Manhattan", "K": "Brooklyn", "Q": "Queens", "X": "Bronx", "R": "Staten Island"}
-# "about 70" -> "~70", "fewer than 10" -> "<10", "no" -> 0; offers also "all", "most" (almost all), 0 (none)
-COUNT = r"no|none|all|almost all|about \d+|fewer than \d+|less than \d+|\d+"
-OUTCOME = re.compile(rf"There were ({COUNT}) (.*?)applicants(.*?)(?: and ({COUNT}) received offers last year)?\.?$")
-
-
-def _count(t):
-    if t in ("no", "none"):
-        return 0
-    if t in ("all", "almost all"):
-        return "all" if t == "all" else "most"
-    n = re.search(r"\d+", t).group()
-    return "~" + n if t.startswith("about") else "<" + n if t[0] in "fl" else int(n)
-
-
-def short_group(nm):
-    """A priority group MySchools words in its own way, shortened for a table row: "Residents of the elementary school
-    zone" -> "Elementary school zone", "District 25 and 28 students and residents" -> "Districts 25 and 28",
-    "Students attending PS 8, PS 153, or PS 173 and to residents of the middle school zone" -> "Attending PS 8, PS 153,
-    or PS 173, or zone residents". Anything else stays as written."""
-    rules = [(r"^Residents of the (.+?) (zones?)$", r"\1 \2"),
-             (r"^(?:Students and Residents of |Students and residents of )?(Districts? [\d ,&]+(?:and \d+)?)(?: students and residents)?$",
-              lambda m: re.sub(r"^District (?=\d+(?:,| and| &))", "Districts ", m.group(1).strip())),
-             (r"^Students and [Rr]esidents of (?:the )?(.+)$", r"\1"),
-             (r"^(Manhattan|Brooklyn|Queens|Bronx|Staten Island) students or residents$", r"\1"),
-             (r"^Students attending (?:or zoned to )?(.+?) and to residents of the middle school zone$", r"Attending \1, or zone residents"),
-             (r"^Students attending or zoned to (.+)$", r"Attending or zoned to \1"),
-             (r"^Students attending (.+)$", r"Attending \1"),
-             (r"^Students residing in the zone and residents of (.+)$", r"Zone residents and \1"),
-             (r"^Continuing (\d+)th grade students$", r"Continuing \1th graders"),
-             (r"^(\d+)th grade students who attend (.+)$", r"\1th graders at \2")]
-    for pat, rep in rules:
-        out = re.sub(pat, rep, nm)
-        if out != nm:
-            return out[:1].upper() + out[1:]
-    return nm
-
-
-def priority_steps(groups, dbn):
-    """MySchools priority groups [[name, outcome sentence]] -> the steps the map and pages show, in order.
-    A step is [group, applicants, offers]: group "S" siblings, "C" continuing students, "B" the school's borough,
-    "D12" a district's students and residents, "Z" the zone, "N" every NYC resident, anything else as written;
-    applicants and offers as _count gives them. [group, 0] means no applicants, [group] no outcome given.
-    When the outcome is split (lunch-eligible applicants first, then the rest; or by district), the step is
-    [group, [who, applicants, offers], ...], who "f" (free or reduced-price lunch), "a" (the rest) or as written.
-    An outcome we can't read is kept as written: [group, None, sentence]."""
-    out = []
-    for name, desc in groups:
-        nm = re.sub(r"^(Priority to|Then to|Open to)\s+", "", (name or "").strip()).rstrip(".")
-        low, boro = nm.lower(), BORO_NAME[dbn[2]]
-        m = re.fullmatch(r"(?:all )?(?:students and residents of district (\d+)|district (\d+) students and residents|d(\d+) students and residents)", low)
-        g = ("N" if low == "new york city residents" else
-             "S" if low.startswith("applicants whose sibling") else
-             "C" if low in ("continuing students", "continuing 8th graders") else
-             "Z" if low in ("students who live in the zoned area", "residents of the middle school zone", "students residing in the zone") else
-             "B" if low in (f"{boro} students and residents".lower(), f"{boro} students or residents".lower(),
-                            f"students and residents of {boro}".lower(), f"students and residents of the {boro}".lower()) else
-             "D" + str(int(next(x for x in m.groups() if x))) if m else short_group(nm[:1].upper() + nm[1:]))
-        if desc is None or not desc.strip():
-            out.append([g])
-            continue
-        parts = []
-        for sent in re.split(r"(?<=\.)\s*(?=There were)", desc.strip()):
-            o = OUTCOME.match(sent.strip())
-            if not o:
-                parts = None
-                break
-            pre, post = o.group(2).strip(), re.sub(r"\s*in this group\s*", " ", o.group(3)).strip()
-            who = "f" if "free or reduced" in post else "a" if pre == "additional" else " ".join(x for x in (pre, post) if x)
-            parts.append([who, _count(o.group(1)), *([_count(o.group(4))] if o.group(4) else [])])
-        if parts is None:
-            out.append([g, None, desc.strip()])
-        elif len(parts) == 1 and not parts[0][0]:
-            out.append([g, *parts[0][1:]])
-        else:
-            out.append([g, *parts])
-    return out
-
-
-def snapshot_tests_row(t):
-    """Snapshot tests [ELA tested, ELA %, Math tested, Math %, ...] -> [ELA tested, proficient, Math tested, proficient],
-    or None. Tiny or hidden counts get a small weight (20)."""
-    if not t or (t[1] is None and t[3] is None):
-        return None
-    n_ela = t[0] or (20 if t[1] is not None else 0)
-    n_mth = t[2] or (20 if t[3] is not None else 0)
-    return [int(n_ela) if t[1] is not None else 0, round(n_ela * t[1] / 100) if t[1] is not None else 0,
-            int(n_mth) if t[3] is not None else 0, round(n_mth * t[3] / 100) if t[3] is not None else 0]
-
-
-def add_charters(d, city_tests):
-    """Charter schools (data/charters.json, charter_snapshot.json), on each level whose grades they teach now.
-    CH rows (d["CH"], d["MS"]["CH"], d["HS"]["CH"]) have the NZ row shape: [dbn, name, address, lat, lon,
-    [district], 0, [], 0, ""], the district being the one the building is in (charter DBNs start with 84).
-    They're kept apart from NZ so the school, district and neighborhood pages (which read NZ) leave them out.
-    CHX: {dbn: [grades now, grades when fully grown ("0K,01,..." like S[].g), enrollment, former name or None]}.
-    Dual language programs come from the hand-checked charter_fixes.json ("dual_language"), into X[4] as the Snapshot's.
-    Ratings, facts and tests come from the elementary/middle Snapshot report; high school outcomes from the high
-    school one. A charter with both keeps its high school ratings in HS.CHR / HS.CHX for the high school view."""
-    info = load("charters.json") if os.path.exists(os.path.join(DATA, "charters.json")) else None
-    if not info:
-        return
-    snap = load("charter_snapshot.json")["schools"] if os.path.exists(os.path.join(DATA, "charter_snapshot.json")) else {}
-    formerly = info.get("formerly", {})
-    fixes = load("charter_fixes.json") if os.path.exists(os.path.join(DATA, "charter_fixes.json")) else {}
-    dual = {k: v[0] for k, v in fixes.get("dual_language", {}).items()}  # hand-checked: the DOE lists none for charters
-    code = lambda gs: ",".join("0K" if g == 0 else f"{g:02d}" for g in gs)
-    d["CHX"], d["CH"] = {}, []
-    for key in ("MS", "HS"):
-        if key in d:
-            d[key]["CH"] = []
-    if "HS" in d:
-        d["HS"]["CHR"], d["HS"]["CHX"] = {}, {}
-    city_grad = next((v[2] for v in d.get("HS", {}).get("O", {}).values() if v and len(v) > 2 and v[2] is not None), None)
-    for dbn, name, addr, lat, lon, dist, now, final, _bldg, _grades, total in info["schools"]:
-        if not now:
-            continue
-        d["CHX"][dbn] = [code(now), code(final), total, formerly.get(dbn)]
-        row = [dbn, name, addr, lat, lon, [dist], 0, [], 0, ""]
-        ems, hsr = snap.get(dbn, {}).get("EMS"), snap.get(dbn, {}).get("HS")
-        # LCGMS has the current name and address; the Snapshot's are last school year's
-        fix = lambda r: [name, addr] + r[2:]
-        if ems:
-            d["R"].setdefault(dbn, fix(ems["r"]))
-            d["X"].setdefault(dbn, ems["x"])
-        elif hsr:
-            d["R"].setdefault(dbn, fix(hsr["r"]))
-            d["X"].setdefault(dbn, hsr["x"])
-        if dbn not in d["X"] and total:
-            d["X"][dbn] = [total]
-        if dbn in dual:  # the extra field for dual language programs (X[4], as from the Snapshot)
-            x = d["X"].setdefault(dbn, [total])
-            x.extend([None] * (5 - len(x)))
-            x[4] = dual[dbn]
-            if hsr and ems:
-                hsr["x"] = hsr["x"][:4] + [dual[dbn]] + hsr["x"][5:]
-        t = test_row(city_tests, dbn, ems and ems.get("t"))
-        if set(now) & {0, 1, 2, 3, 4, 5}:
-            d["CH"].append(row)
-            if t:
-                d["T"][dbn] = t
-        if set(now) & {6, 7, 8} and "MS" in d:
-            d["MS"]["CH"].append(row)
-            if t:
-                d["MS"]["T"][dbn] = t
-        if set(now) & {9, 10, 11, 12} and "HS" in d:
-            d["HS"]["CH"].append(row)
-            if hsr:
-                q, oc = hs_snapshot_rows(hsr.get("hs", {}), city_grad)
-                if q:
-                    d["HS"].setdefault("Q", {})[dbn] = q
-                if oc:
-                    d["HS"]["O"][dbn] = oc
-                if ems:
-                    d["HS"]["CHR"][dbn], d["HS"]["CHX"][dbn] = fix(hsr["r"]), hsr["x"]
-    print(f"charter schools: {len(d['CH'])} elementary, {len(d.get('MS', {}).get('CH', []))} middle, "
-          f"{len(d.get('HS', {}).get('CH', []))} high school; {sum(1 for k in d['CHX'] if k in d['R'])} with Snapshot data")
-
-
-def main(standalone_path=None, pages=None):
+def main(standalone_path=None):
     import datetime
-    d = load("elem_zones.json")
-    ncolors = prepare_zones(d)
-    zoned = {x for f in d["features"] for x in f["properties"]["dbns"]}
-
-    city_tests = load_tests()
-    snap_tests = load("snapshot_tests.json") if os.path.exists(os.path.join(DATA, "snapshot_tests.json")) else {}
-    d["T"] = {k: v for k in sorted(zoned) if (v := test_row(city_tests, k, snap_tests.get(k)))}
-    d["R"] = load("snapshot_ratings.json")
-    d["X"] = load("snapshot_extra.json") if os.path.exists(os.path.join(DATA, "snapshot_extra.json")) else {}
-
-    # Non-zoned elementary schools (optional): MySchools kindergarten directory + their Snapshot pages.
-    # NZ rows: [dbn, name, address, lat, lon, priority districts, district residents only (1/0),
-    #           programs [[code, dual language (1/0), seats, applicants, all seats filled (1/0/None)]], citywide G&T (1/0)]
-    nz_dbns = set()
-    if os.path.exists(os.path.join(DATA, "nonzoned_k.json")):
-        snap = load("nonzoned_snapshot.json") if os.path.exists(os.path.join(DATA, "nonzoned_snapshot.json")) else {}
-        d["NZ"] = []
-        # citywide G&T schools ride along, marked with a trailing 1 (no zone, open to eligible children citywide)
-        gt_rows = load("citywide_gt_k.json") if os.path.exists(os.path.join(DATA, "citywide_gt_k.json")) else []
-        for row in [r[:8] + [0] for r in load("nonzoned_k.json")] + [r[:8] + [1] for r in gt_rows]:
-            dbn = row[0]
-            if dbn in zoned or not row[3]:
-                continue
-            s = snap.get(dbn)
-            if s:
-                row = [dbn, row[1] if row[8] else (s["r"][0] or row[1]), s["r"][1] or row[2], *row[3:]]
-                d["R"][dbn] = s["r"]
-                d["X"][dbn] = s["x"]
-            t = test_row(city_tests, dbn, s and s.get("t"))
-            if t:
-                d["T"][dbn] = t
-            d["NZ"].append(row)
-            nz_dbns.add(dbn)
-        print(f"non-zoned elementary schools: {sum(1 for x in d['NZ'] if not x[8])}, citywide G&T: {sum(1 for x in d['NZ'] if x[8])}, "
-              f"{sum(1 for x in d['NZ'] if x[0] in snap)} with Snapshot data")
-    es_all = zoned | nz_dbns
-    d["DIST"] = load("districts.json") if os.path.exists(os.path.join(DATA, "districts.json")) else {}
-    color_districts(d["DIST"])
-    d["ST"] = load("streets.json") if os.path.exists(os.path.join(DATA, "streets.json")) else []
-    d["LS"] = load("local_streets.json") if os.path.exists(os.path.join(DATA, "local_streets.json")) else {"n": [], "l": []}
-    # park outlines for the green tint over the basemap (fetch_data.py parks): {"p": [[ring, ...] per park]}
-    if os.path.exists(os.path.join(DATA, "parks.json")):
-        d["PARKS"] = load("parks.json")
-
-    # Middle school zones (optional): same shape as the elementary data, tests for grades 6-8
-    if os.path.exists(os.path.join(DATA, "ms_zones.json")):
-        ms = load("ms_zones.json")
-        prepare_zones(ms)
-        ms_zoned = {x for f in ms["features"] for x in f["properties"]["dbns"]}
-        d["MS"] = {"schools": ms["schools"], "features": ms["features"],
-                   "T": {k: v for k in sorted(ms_zoned) if (v := test_row(city_tests, k, snap_tests.get(k)))}}
-
-        # Middle school programs (MySchools directory) and choice schools with no zone. P: programs per school,
-        # [name ('' = the school's main program), method code, seats, applicants, all seats filled, diversity set-aside,
-        #  priority steps (priority_steps), seats for students with disabilities, their applicants, all filled (1/0)];
-        #  seats and applicants are general education only, settings.MYSCHOOLS_LABEL; District 75 and ASD/ACES
-        #  programs come last, with special ed seats only;
-        # NZ rows have the same shape as the elementary ones (no priority districts listed: middle schools give district priority)
-        if os.path.exists(os.path.join(DATA, "ms_directory.json")):
-            msdir = load("ms_directory.json")
-            for r in msdir:
-                r[5] = [p[:6] + [priority_steps(p[6] if len(p) > 6 else [], r[0])] + (p[7:10] + [None] * 3)[:3] for p in r[5]]
-            snaps = {}
-            for name in ("nonzoned_snapshot.json", "ms_snapshot.json"):
-                if os.path.exists(os.path.join(DATA, name)):
-                    snaps.update(load(name))
-            d["MS"]["P"] = {r[0]: r[5] for r in msdir}
-            # EX: classes, sports and activities per school as indexes into EXV (each name once): [accelerated and honors
-            #   classes, arts courses, electives, sports, clubs and activities]
-            exv, exi = [], {}
-            def ex_ix(n):
-                if n not in exi:
-                    exi[n] = len(exv)
-                    exv.append(n)
-                return exi[n]
-            d["MS"]["EX"] = {r[0]: [[ex_ix(n) for n in r[6][k]] for k in ("acc", "art", "el", "sp", "ac")]
-                             for r in msdir if len(r) > 6 and any(r[6].values())}
-            d["MS"]["EXV"] = exv
-            d["MS"]["NZ"] = []
-            # citywide middle schools (open to students from anywhere in the city) are marked with a trailing 1
-            citywide = set(load("citywide_ms.json")["dbns"]) if os.path.exists(os.path.join(DATA, "citywide_ms.json")) else set()
-            for r in msdir:
-                dbn = r[0]
-                if dbn in ms_zoned or not r[3]:
-                    continue
-                s = snaps.get(dbn)
-                name, addr = r[1], r[2]
-                if s:
-                    name, addr = s["r"][0] or name, s["r"][1] or addr
-                    d["R"].setdefault(dbn, s["r"])
-                    d["X"].setdefault(dbn, s["x"])
-                t = test_row(city_tests, dbn, s and s.get("t"))
-                if t:
-                    d["MS"]["T"][dbn] = t
-                # programs without their priority steps: the card reads those from P
-                d["MS"]["NZ"].append([dbn, name, addr, r[3], r[4], [], 0, [p[:6] for p in r[5]], 1 if dbn in citywide else 0])
-            print(f"middle school choice schools (no zone): {len(d['MS']['NZ'])}, programs for {len(d['MS']['P'])} schools")
-
-    # High school zones (optional): zoned-priority / zoned-guarantee programs, with Snapshot outcomes
-    if os.path.exists(os.path.join(DATA, "hs_zones.json")):
-        hs = load("hs_zones.json")
-        prepare_zones(hs)
-        outcomes = load("hs_outcomes.json") if os.path.exists(os.path.join(DATA, "hs_outcomes.json")) else {}
-        hs_outcomes_file = set(outcomes)
-        d["HS"] = {"schools": hs["schools"], "features": hs["features"], "O": outcomes}
-
-        # High school programs and every high school without a zone (MySchools high school directory).
-        # P: programs per school, [name, method code, seats, applicants, all seats filled, diversity set-aside,
-        #   priority steps (priority_steps), seats for students with disabilities, their applicants, all filled],
-        #   as for middle school. NZ rows match the elementary/middle ones; the trailing flag marks the
-        #   9 specialized high schools (8 SHSAT schools + LaGuardia), and one more field holds a priority summary.
-        if os.path.exists(os.path.join(DATA, "hs_directory.json")):
-            hsdir = load("hs_directory.json")["schools"]
-            hs_zoned = {x for f in hs["features"] for x in f["properties"]["dbns"]}
-            MCODE = {"Screened": "S", "Screened With Assessment": "SA", "Screened: Language & Academics": "SL", "Ed. Opt.": "E",
-                     "Audition": "A", "Open": "O", "Language Criteria": "L", "Test": "T", "Zoned Guarantee": "ZG",
-                     "Zoned Priority": "ZP", "Transfer": "TR", "D75 Special Education Inclusive Services": "D75",
-                     "ASD/ACES Program": "ASD"}
-            SPECIAL = ("D75", "ASD")
-            city_grad = next((v[2] for v in outcomes.values() if v and len(v) > 2 and v[2] is not None), None)
-            d["HS"]["P"], d["HS"]["NZ"], d["HS"]["R"], d["HS"]["X"] = {}, [], {}, {}
-            for o in hsdir:
-                dbn, boro = o["dbn"], BORO_NAME[o["dbn"][2]]
-                progs = []
-                for q in o["p"]:
-                    code = MCODE.get(q["m"], q["m"])
-                    progs.append([q["n"], code, q["s"], q["ap"], 1 if q["f"] else 0, 1 if q["d1"] else 0, priority_steps(q["pg"], dbn),
-                                  q.get("ws"), q.get("wa"), None if q.get("wf") is None else int(q["wf"])])
-                progs.sort(key=lambda p: p[1] in SPECIAL)  # special education programs last
-                d["HS"]["P"][dbn] = progs
-                # ratings and outcomes from MySchools for schools the Snapshot files don't cover
-                if dbn not in d["R"] and any(o["r"]):
-                    d["HS"]["R"][dbn] = [o["n"], o["a"], *o["r"], "HS"]
-                if dbn not in outcomes and (o["gr"] is not None or o["cc"] is not None):
-                    outcomes[dbn] = [o["gr"], o["cc"], city_grad]
-                if dbn not in d["X"] and o["en"]:
-                    d["HS"]["X"][dbn] = [o["en"]]
-                if dbn in hs_zoned or not o["lat"]:
-                    continue
-                shs = any(q["shs"] or q["lg"] for q in o["p"])
-                main = [p for p in progs if p[1] not in SPECIAL]
-                nb = sum(1 for p in main if any(g[0] == "B" for g in p[6]))
-                if shs:
-                    pz = ""
-                elif main and nb == len(main):
-                    pz = "Priority to " + boro + " students and residents, then the rest of NYC."
-                elif nb:
-                    pz = "Some programs give priority to " + boro + " students and residents; the rest are open to all of NYC."
-                else:
-                    pz = "Open to students from anywhere in NYC."
-                if not shs and any(g[0] == "C" for p in main for g in p[6]):
-                    pz += " Continuing 8th graders get priority."
-                d["HS"]["NZ"].append([dbn, o["n"], o["a"], o["lat"], o["lon"], [], 0, [p[:6] for p in progs], 1 if shs else 0, pz])
-            d["HS"]["O"] = outcomes
-            # SAT, college readiness, where graduates went and advanced courses (2024-25 Snapshot, high school report).
-            # Q: [average SAT, college & career readiness score, % in any advanced course, % in AP,
-            #     [CUNY 4-year, CUNY 2-year, NY public (SUNY etc.), NY private, out of state, for-profit, other] % of graduates,
-            #     AP subjects students passed]
-            if os.path.exists(os.path.join(DATA, "hs_snapshot.json")):
-                Q = {}
-                for dbn, o in load("hs_snapshot.json")["schools"].items():
-                    row, oc = hs_snapshot_rows(o, city_grad)
-                    if row:
-                        Q[dbn] = row
-                    # graduation and college/career enrollment straight from the Snapshot for schools not in hs_outcomes.json
-                    if dbn not in hs_outcomes_file and oc:
-                        outcomes[dbn] = oc
-                d["HS"]["Q"] = Q
-                print(f"high school SAT/readiness/destinations: {sum(1 for r in Q.values() if r[0])} SAT, "
-                      f"{sum(1 for r in Q.values() if r[1] is not None)} readiness, {sum(1 for r in Q.values() if r[4])} destinations")
-            if os.path.exists(os.path.join(DATA, "shsat_cutoffs.json")):
-                c = load("shsat_cutoffs.json")
-                d["HS"]["CUT"] = {"y": c["year"], "c": c["cut"]}
-            print(f"high schools without a zone: {len(d['HS']['NZ'])} ({sum(1 for r in d['HS']['NZ'] if r[8])} specialized), "
-                  f"programs for {len(d['HS']['P'])} schools")
-
-    add_charters(d, city_tests)
-
-    # grade 6 and grade 9 admissions (Local Law 72), same record shape as kindergarten (see fetch_k_admissions)
-    for key, name in (("MS", "ms_admissions.json"), ("HS", "hs_admissions.json")):
-        if key in d and os.path.exists(os.path.join(DATA, name)):
-            adm = load(name)
-            lvl = d[key]
-            have = set(lvl.get("schools", {})) | {r[0] for r in lvl.get("NZ", [])}
-            lvl["A"] = {k: {max(v): v[max(v)]} for k, v in adm.items() if k in have and v}  # the latest year is all the card shows
-            print(f"{key.lower()} admissions: {len(lvl['A'])} schools")
-    ms_nz = {r[0] for r in d.get("MS", {}).get("NZ", [])}
-    es_all = es_all | ms_nz  # school facts below cover the middle school choice schools too
-    # Class size (optional): keep only zoned schools at any level
-    if os.path.exists(os.path.join(DATA, "class_size.json")):
-        all_zoned = set(es_all)
-        for key in ("MS", "HS"):
-            if key in d:
-                all_zoned |= {x for f in d[key]["features"] for x in f["properties"]["dbns"]}
-        d["CS"] = {k: {f: x for f, x in v.items() if f != "ptr"} for k, v in load("class_size.json").items() if k in all_zoned}
-
-    # Building use (optional): SCA Blue Book, keyed by borough + school number, so match on the DBN minus its district
-    if os.path.exists(os.path.join(DATA, "utilization.json")):
-        all_zoned = set(es_all)
-        for key in ("MS", "HS"):
-            if key in d:
-                all_zoned |= {x for f in d[key]["features"] for x in f["properties"]["dbns"]}
-        util = load("utilization.json")
-        d["U"] = {k: util[k[2:]] for k in sorted(all_zoned) if k[2:] in util}
-        print(f"building use: {len(d['U'])} of {len(all_zoned)} zoned schools")
-
-    # Pre-K and 3-K seats and applicants (optional): elementary zoned schools only
-    if os.path.exists(os.path.join(DATA, "prek.json")):
-        pk = load("prek.json")
-        d["PK"] = {k: pk[k] for k in sorted(es_all) if k in pk}
-        print(f"pre-K: {sum(1 for v in d['PK'].values() if v[0])} of {len(es_all)} elementary schools")
-
-    # Kindergarten admissions by year (optional): elementary zoned schools only
-    if os.path.exists(os.path.join(DATA, "k_admissions.json")):
-        ka = load("k_admissions.json")
-        d["KA"] = {k: ka[k] for k in sorted(es_all) if k in ka}
-        print(f"kindergarten admissions: {len(d['KA'])} of {len(es_all)} elementary schools")
-
-    # Kindergarten priority groups (optional, MySchools kindergarten directory): KP {dbn: priority steps (priority_steps)}
-    if os.path.exists(os.path.join(DATA, "k_priority.json")):
-        kp = load("k_priority.json")
-        d["KP"] = {k: priority_steps(kp[k], k) for k in sorted(es_all) if k in kp}
-        print(f"kindergarten priority groups: {len(d['KP'])} of {len(es_all)} elementary schools")
-
-    # English language learners and students with IEPs as counts (Snapshot ell_n, iep_n): XN {dbn: [enrollment, ELL,
-    # IEP]}, only where the Snapshot report's enrollment is the one the card shows (X[0]), so "159 of 1,030" adds up
-    if os.path.exists(os.path.join(DATA, "snapshot_counts.json")):
-        counts = load("snapshot_counts.json")
-        d["XN"] = {}
-        for dbn, x in sorted({**d.get("HS", {}).get("X", {}), **d["X"]}.items()):
-            m = next((c for c in counts.get(dbn, {}).values() if x and c[0] == x[0]), None)
-            if m:
-                d["XN"][dbn] = m
-        print(f"English learner and IEP counts: {len(d['XN'])} of {len(d['X'])} schools with Snapshot facts")
-
-    # Building accessibility (MySchools): AC {dbn: "F" fully, "P" partially, "N" not accessible}, every level
-    if os.path.exists(os.path.join(DATA, "accessibility.json")):
-        d["AC"] = load("accessibility.json")
-
-    # Schools sharing the building (Snapshot co_located, LCGMS names): CO {dbn: [[dbn, name], ...]}, for the schools
-    # that have a card at any level
-    if os.path.exists(os.path.join(DATA, "colocation.json")):
-        shown = set(d["X"]) | {r[0] for lv in (d, d.get("MS") or {}, d.get("HS") or {})
-                               for r in lv.get("NZ", []) + lv.get("CH", [])}
-        shown |= {x for lv in (d, d.get("MS") or {}, d.get("HS") or {}) for f in lv.get("features", [])
-                  for x in f["properties"]["dbns"]} | set((d.get("HS") or {}).get("X", {}))
-        d["CO"] = {k: v for k, v in load("colocation.json")["schools"].items() if k in shown}
-        print(f"shared buildings: {len(d['CO'])} schools")
-
-    # Who goes to each school (DOE Demographic Snapshot, settings.DEMOGRAPHICS_LABEL): DM {dbn: [enrollment, Asian
-    # and Pacific Islander, Black, Hispanic, White, everyone else, % in poverty (whole % or ">95" / "<5"),
-    # girls, boys, students with IEPs, English language learners]}. d["DM"] has the elementary map's
-    # schools; MS.DM and HS.DM the rest of their level's, loaded with it. DMC: the same row for every NYC public
-    # school student
-    if os.path.exists(os.path.join(DATA, "demographics.json")):
-        dm = load("demographics.json")
-        done, n = set(), 0
-        for lv in (d, d.get("MS"), d.get("HS")):
-            if lv is None:
-                continue
-            shown = {x for f in lv["features"] for x in f["properties"]["dbns"]}
-            shown |= {r[0] for r in lv.get("NZ", []) + lv.get("CH", [])}
-            lv["DM"] = {k: v for k, v in dm["schools"].items() if k in shown - done}
-            done |= shown
-            n += len(lv["DM"])
-        d["DMC"] = dm["city"]
-        print(f"demographics: {n} of {len(done)} schools")
-
-    apply_school_fixes(d)
-    fix_addresses(d)
-    add_grades(d)
+    option = load("option_schools.json")
+    # results.json (optional): {school id: [ELA tested, ELA met standard, math tested, math met standard]}
+    results = load("results.json")["schools"] if os.path.exists(os.path.join(DATA, "results.json")) else {}
+    d, z = level("elem_zones.json", option["es"], results)
+    d["MS"], _ = level("ms_zones.json", option["ms"], results)
+    d["HS"], _ = level("hs_zones.json", option["hs"], results)
+    # grades for the schools the zone files don't carry (the option schools)
+    d["G"] = {r[0]: r[6] for rows in option.values() for r in rows}
+    d["ST"], d["LS"], d["DIST"] = [], {"n": [], "l": []}, {}
 
     with open(os.path.join(ROOT, "src", "template.html"), encoding="utf-8") as f:
         template = f.read()
     template = template.replace("__UPDATED__", datetime.date.today().strftime("%b %Y"))
     with open(os.path.join(ROOT, "VERSION"), encoding="utf-8") as f:
-        version = f.read().strip()
-    template = template.replace("__VERSION__", version)
-    # zones date: when data/elem_zones.json was last refreshed
-    zdate = datetime.date.fromtimestamp(os.path.getmtime(os.path.join(DATA, "elem_zones.json")))
-    template = template.replace("__ZONES_DATE__", zdate.strftime("%b %Y"))
+        template = template.replace("__VERSION__", f.read().strip())
+    template = template.replace("__ZONES_DATE__", z["year"])
     template = template.replace("__ES_ZONES__", str(len(d["features"])))
     template = fill_settings(template)
 
     full = dict(d)
-    # For the website, middle school, high school, the all-streets layer and the parks load on demand from
-    # assets/ so the first view is about half the size. The standalone file keeps everything inline.
-    split = {"ms": d.pop("MS", None), "hs": d.pop("HS", None), "ls": d.pop("LS", None), "parks": d.pop("PARKS", None)}
+    # Middle and high school load on demand from assets/. The standalone file keeps everything inline.
     assets = {}
     os.makedirs(os.path.join(ROOT, "assets"), exist_ok=True)
-    for key, obj in split.items():
-        if obj is None:
-            continue
+    for key, obj in {"ms": d.pop("MS"), "hs": d.pop("HS")}.items():
         # A .js file that sets window.NYCSZ[key], loaded with a script tag so it also works from file://
         rel = f"assets/{key}.js"
         with open(os.path.join(ROOT, rel), "w", encoding="utf-8") as f:
@@ -1005,44 +234,13 @@ def main(standalone_path=None, pages=None):
         assets[key] = rel
     d["ASSETS"] = assets
 
-    if pages:
-        # one plain page per school at /schools/<DBN>/ (see scripts/pages.py)
-        import pages as school_pages
-        school_pages.set_from_template(template)  # the notice, theme colors and fonts
-        # which zones cover each neighborhood, for the neighborhood pages and the links to them (scripts/neighborhoods.py)
-        nbi = None
-        if os.path.exists(os.path.join(DATA, "neighborhoods.json")):
-            import neighborhoods
-            nbi = neighborhoods.index(full, load("neighborhoods.json"))
-        n = school_pages.write_pages(full, ROOT, None if pages == "all" else pages.split(","), SITE_URL, goatcounter_tag(), nbi)
-        print(f"wrote {n} school pages in schools/")
-        if pages == "all":
-            urls = school_pages.write_districts(full, ROOT, SITE_URL, goatcounter_tag(), nbi)
-            print(f"wrote {len(urls)} district pages")
-            if nbi:
-                nb_urls = neighborhoods.write(full, nbi, ROOT, SITE_URL, goatcounter_tag())
-                print(f"wrote {len(nb_urls)} neighborhood pages")
-                urls += nb_urls
-            school_urls = sorted(f"{SITE_URL}schools/{x}/" for x in os.listdir(os.path.join(ROOT, "schools"))
-                                 if os.path.exists(os.path.join(ROOT, "schools", x, "index.html")))
     if standalone_path:
         write_page(template, full, standalone_path)
         print(f"wrote {standalone_path} ({os.path.getsize(standalone_path) / 1e6:.2f} MB, everything inline)")
     out = os.path.join(ROOT, "index.html")
     write_page(template, d, out)
-    if pages == "all":
-        # last, so each page's lastmod can tell whether this build changed it
-        school_pages.write_sitemap(ROOT, SITE_URL, urls + school_urls)
-        print(f"wrote sitemap.xml ({len(urls) + len(school_urls) + 1} URLs) and robots.txt")
-    d = full  # for the summary below
-
-    print(f"{len(d['features'])} zones, {ncolors} neighbor colors, "
-          f"{len(d['T'])} schools with test results, {len(d['R'])} with Snapshot data, "
-          f"{len(d['ST'])} major street lines, {len(d['LS']['l'])} local street lines")
-    if "HS" in d:
-        print(f"high school: {len(d['HS']['features'])} zones, {len(d['HS']['O'])} schools with outcomes")
-    if "MS" in d:
-        print(f"middle school: {len(d['MS']['features'])} zones, {len(d['MS']['T'])} schools with test results")
+    for lv, x in (("elementary", full), ("middle", full["MS"]), ("high", full["HS"])):
+        print(f"{lv}: {len(x['features'])} zones, {len(x['NZ'])} schools without a zone, {len(x['T'])} with results")
     print(f"wrote {out} ({os.path.getsize(out) / 1e6:.2f} MB) + " +
           ", ".join(f"{p} ({os.path.getsize(os.path.join(ROOT, p)) / 1e6:.2f} MB)" for p in assets.values()))
 
@@ -1072,9 +270,7 @@ def write_page(template, d, out):
         f.write(html)
 
 
-
 if __name__ == "__main__":
     import sys
     args = sys.argv[1:]
-    main(args[args.index("--standalone") + 1] if "--standalone" in args else None,
-         None if "--no-pages" in args else args[args.index("--pages") + 1] if "--pages" in args else "all")
+    main(args[args.index("--standalone") + 1] if "--standalone" in args else None)

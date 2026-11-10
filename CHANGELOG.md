@@ -6,6 +6,12 @@ What changed in each version of [nycschoolzones.com](https://nycschoolzones.com)
 - **Minor** (1.1.0): a new feature, like admissions data in the zone card
 - **Patch** (1.0.1): fixes and wording changes
 
+## Unreleased
+
+### Added
+
+- A first Seattle test of the map: Seattle Public Schools' elementary, middle and high school attendance areas (2025-26), the option schools, and each school's spring 2026 state test results, with address search for Seattle. The NYC ratings, admissions, charter schools, districts and school pages are switched off or removed.
+
 ## 1.67.0 (2026-11-04)
 
 ### Changed
