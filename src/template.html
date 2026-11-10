@@ -571,6 +571,7 @@ const CITY={center:[47.61,-122.33],zoom:11,
   pages:false,       // no page of our own per school; the card links to the district's (schoolPage) instead
   schoolPage:'https://www.seattleschools.org/schools/',schoolPageName:'seattleschools.org',
   reportCard:'https://reportcard.ospi.k12.wa.us/ReportCard/ViewSchoolOrDistrict/',
+  name:'Seattle Public Schools',short:'District',  // the column the school's numbers are compared with
   find:'https://www.seattleschools.org/enroll/find-your-school/',findName:'the district’s Address Lookup',
   // King County's address locator (free, no key): one request per search, no separate autocomplete
   geocoder:'https://gismaps.kingcounty.gov/arcgis/rest/services/Address/Composite_locator/GeocodeServer/findAddressCandidates',
@@ -1191,9 +1192,9 @@ function factsHtml(d){const x=X[d]||[],c=CS[d]||{},u=U[d],co=CO[d];if(!X[d]&&!CS
   const cs=v=>v!=null?Math.round(v)+' students':null;
   const row=(k,v)=>v==null?'':'<span>'+k+'</span><b>'+v+'</b>';
   const h=row('Attendance',x[1]!=null?x[1]+'%':null)+row('Teachers with 3+ years’ experience',x[2]!=null?x[2]+'%':null)+row('Principal’s years at school',x[3]!=null?(Math.round(x[3]*10)/10):null)+row('Median home distance',x[9]!=null?x[9]+(x[9]===1?' mile':' miles'):null)+(level==='es'?row('Kindergarten class size',cs(c.k))+row('Grades 1–5 class size',cs(c.e)):row('Core class size',cs(level==='ms'?c.ms:c.hs)))+row('Building use (how full)',u?u[0]+'% of capacity':null)+row('Building accessibility',AC_TXT[AC[d]])+(co?row('Shares its building with',co.length+(co.length>1?' schools':' school'))+'<small>'+co.map(y=>esc(y[1])).join(' · ')+'</small>':'')+'';return h?'<div class="facts">'+h+'</div>':''}
-// Demographics: who goes to the school (DOE Demographic Snapshot, __DEMOGRAPHICS__). DM rows are [enrollment, counts in
-// DEMO_GROUPS order, % low-income (the DOE's "poverty": a whole % or ">95" / "<5"), girls, boys, students with IEPs,
-// English language learners]; DMC the same for all of NYC
+// Demographics: who goes to the school (the state's Report Card enrollment data, __DEMOGRAPHICS__). DM rows are
+// [enrollment, counts in DEMO_GROUPS order, % low-income, girls, boys, students with disabilities, English learners,
+// gender X]; DMC the same for the whole district
 const DEMO_GROUPS=__DEMO_GROUPS__;  // scripts/settings.py
 function dmPct(n,t){const q=t?100*n/t:0;return (q>0&&q<1?'<1':Math.round(q))+'%'}
 function dmPov(p){return p==null?'n/a':p==='>95'?'Over 95%':p==='<5'?'Under 5%':p+'%'}
@@ -1209,19 +1210,20 @@ function demoSec(d){const m=DM[d]&&DM[d][0]?DM[d]:null,x=X[d]||[],c=DMC,k=DEMO_G
   if(!m){const sn=[['Students with IEPs (special ed)',ofAll(d,2,x[6])],['English language learners',ofAll(d,1,x[5])]].filter(y=>y[1]!=null);
     return sn.length?sec('demo','<span class="st">Demographics</span>','<div class="dm">'+sn.map(y=>'<span class="g">'+y[0]+'</span><b class="wide">'+y[1]+'</b>').join('')+'<small>__SNAPSHOT__ School Quality Snapshot.</small></div>'):''}
   const row=(lab,v,cv,cl)=>v==null?'':'<span class="g'+(cl?' '+cl:'')+'">'+lab+'</span><b'+(cl?' class="'+cl+'"':'')+'>'+v+'</b><span class="c'+(cl?' '+cl:'')+'">'+(cv||'')+'</span>';
-  const both=r=>!(r[k+2]+r[k+3])?null:!r[k+3]?'All girls':!r[k+2]?'All boys':dmPct(r[k+2],r[k+2]+r[k+3])+' · '+dmPct(r[k+3],r[k+2]+r[k+3]);
+  // girls, boys and the state's third category, gender X, as shares of all three: a row each, so the numbers stay narrow
+  const gx=r=>r[k+6]||0,gt=r=>r[k+2]+r[k+3]+gx(r),sexRow=(lab,ix,cl)=>row(lab,dmPct(m[ix]||0,gt(m)),c&&dmPct(c[ix]||0,gt(c)),cl);
   const g=m.slice(1,1+k),pv=m[1+k];
   const bar=(v,cl,lab)=>'<div class="dbar'+(cl?' '+cl:'')+'"'+(lab?' role="img" aria-label="'+lab+'"':'')+'>'+v.map((n,i)=>n?'<i style="flex:'+n+' 1 0;background:'+DEMO_GROUPS[i][1]+'"></i>':'').join('')+'</div>';
-  const top=g.map((n,i)=>[n,i]).filter(y=>y[1]<k-1&&y[0]).sort((a,b)=>b[0]-a[0]).slice(0,2).map(y=>dmPct(y[0],m[0])+' '+DEMO_GROUPS[y[1]][0].split(' ')[0]);
+  const top=g.map((n,i)=>[n,i]).filter(y=>y[1]<k-1&&y[0]).sort((a,b)=>b[0]-a[0]).slice(0,2).map(y=>dmPct(y[0],m[0])+' '+(DEMO_GROUPS[y[1]][2]||DEMO_GROUPS[y[1]][0].split(' ')[0]));
   const h='<div class="dm"><span class="bl">This school · '+m[0].toLocaleString()+' students</span>'+bar(g,'',DEMO_GROUPS.map((y,i)=>y[0]+' '+dmPct(g[i],m[0])).join(', '))+
-    (c?'<span class="bl">All NYC public schools</span>'+bar(c.slice(1,1+k),'city'):'')+
-    '<span></span><span class="hd">School</span><span class="hd">'+(c?'NYC':'')+'</span>'+
+    (c?'<span class="bl">All of '+CITY.name+'</span>'+bar(c.slice(1,1+k),'city'):'')+
+    '<span></span><span class="hd">School</span><span class="hd">'+(c?CITY.short:'')+'</span>'+
     DEMO_GROUPS.map((y,i)=>'<span class="g"><i style="background:'+y[1]+'"></i>'+y[0]+'</span><b>'+dmPct(g[i],m[0])+'</b><span class="c">'+(c?dmPct(c[1+i],c[0]):'')+'</span>').join('')+
-    row('Girls · boys',both(m),c&&both(c),'pov')+
+    (gt(m)?sexRow('Girls',k+2,'pov')+sexRow('Boys',k+3)+(gx(m)||c&&gx(c)?sexRow('Gender X',k+6):''):'')+
     row('Low-income students',pv!=null?dmPov(pv):null,c&&dmPov(c[1+k]))+
-    row('<span>Students with IEPs (special ed)<small>'+m[k+4].toLocaleString()+' of '+m[0].toLocaleString()+'</small></span>',dmPct(m[k+4],m[0]),c&&dmPct(c[k+4],c[0]),'pov')+
+    row('<span>Students with disabilities<small>'+m[k+4].toLocaleString()+' of '+m[0].toLocaleString()+'</small></span>',dmPct(m[k+4],m[0]),c&&dmPct(c[k+4],c[0]),'pov')+
     row('<span>English language learners<small>'+m[k+5].toLocaleString()+' of '+m[0].toLocaleString()+'</small></span>',dmPct(m[k+5],m[0]),c&&dmPct(c[k+5],c[0]))+
-    '<small>DOE Demographic Snapshot, __DEMOGRAPHICS__, counting every student, 3-K and pre-K included. IEPs and English learners as of the end of the school year; pre-K students aren’t tested for English, so the English learner share runs a little low at schools with pre-K. Low-income: families who qualify for free or reduced-price lunch (income up to about 185% of the poverty line) or get HRA benefits like SNAP'+(CHX[d]?'; it can be undercounted at charter schools that don’t use DOE school food':'')+'.</small></div>';
+    '<small>Washington State Report Card enrollment, __DEMOGRAPHICS__. Low-income, students with disabilities (those with an IEP) and English learners are the state’s counts for the school year.</small></div>';
   return sec('demo','<span class="st">Demographics<small>'+[dmSex(m)].concat(top,pv!=null?[dmPov(pv).replace('Over','over').replace('Under','under')+' low-income']:[]).filter(Boolean).join(' · ')+'</small></span>',h)}
 // school card: sections that open and close. Each viewer's choice is remembered in this browser; the Color by
 // metric also opens the section that shows it (without changing what's remembered). The non-zoned and charter

@@ -29,7 +29,8 @@ PREK_LABEL = "fall 2025"
 MYSCHOOLS_LABEL = "fall 2026"
 # Building use: the SCA's Enrollment, Capacity & Utilization Report ("Blue Book", data/utilization.json)
 BLUE_BOOK_LABEL = "2025–26"
-# Race and ethnicity, family income and more: the DOE's Demographic Snapshot (data/demographics.json), the school year it counts
+# Race and ethnicity, family income and more: the state's Report Card enrollment data (data/enrollment.json), the
+# school year it counts. The build stops if the file is from another year.
 DEMOGRAPHICS_LABEL = "2025–26"
 
 # NYC-wide high school averages from that Snapshot, quoted next to each school's numbers
@@ -54,7 +55,9 @@ OUT_STOPS = {"grad": [[65, "red"], [80, "yellow"], [95, "green"]],     # 4-year 
              "ccr": [[35, "red"], [55, "yellow"], [80, "green"]],      # college readiness score
              "sat": [[800, "red"], [950, "yellow"], [1200, "green"]]}  # average SAT
 
-# Race and ethnicity bars on the cards and school pages: [label, color], in the order of a demographics.json row.
-# Categorical (no group is "better"), so none of the ramp colors above; checked for color blindness side by side.
-DEMO_GROUPS = [["Asian or Pacific Islander", "#2a78d6"], ["Black", "#eb6834"], ["Hispanic", "#1baf7a"], ["White", "#eda100"],
-               ["Multiracial, Native American or not reported", "#9aa5a0"]]
+# Race and ethnicity bars on the cards and school pages: [label, color], in the order of an enrollment.json row
+# (fetch_seattle.py ENROLLMENT_FIELDS). Categorical (no group is "better"), so none of the ramp colors above. The first
+# four and the gray were checked for color blindness side by side on the NYC site; the purple was added here and wasn't.
+# An optional third item is the name in the section's one-line summary, where the label's first word won't do.
+DEMO_GROUPS = [["Asian", "#2a78d6"], ["Black", "#eb6834"], ["Hispanic or Latino", "#1baf7a"], ["White", "#eda100"],
+               ["Two or more races", "#8a63c9", "multiracial"], ["Native American or Pacific Islander", "#9aa5a0"]]

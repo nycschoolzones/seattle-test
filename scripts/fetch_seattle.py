@@ -11,6 +11,10 @@ ArcGIS services, no key) and write them in the shapes scripts/build.py reads:
       {"es" / "hs": [{"properties": {"id", "name"}, "geometry"}]}   the area with priority at an option school
   data/school_links.json
       {id: {"page": the school's profile page under seattleschools.org/schools/, "state": the state's school id}}
+  data/enrollment.json
+      {"year", "district": row, "schools": {id: row}}, a row being [students, Asian, Black, Hispanic or Latino,
+      White, two or more races, Native American or Pacific Islander, low-income, girls, boys, students with
+      disabilities, English learners, gender X], all counts, from the state's Report Card enrollment data
   data/results.json
       {"year", "schools": {id: [ELA tested, ELA met standard, math tested, math met standard]}}
       Smarter Balanced results, all grades, from the state's Report Card data (data.wa.gov, no key),
@@ -44,6 +48,13 @@ RESULTS = "https://data.wa.gov/resource/fusr-6kv7.json"
 RESULTS_YEAR = "2025-26"
 # the district's school directory: one profile page per school under it
 DIRECTORY = "https://www.seattleschools.org/schools/"
+# Washington State Report Card enrollment for ENROLLMENT_YEAR (data.wa.gov; each school year is its own dataset)
+ENROLLMENT = "https://data.wa.gov/resource/wvqy-yp3m.json"
+ENROLLMENT_YEAR = "2025-26"
+# an enrollment.json row, in order; a list of fields is summed
+ENROLLMENT_FIELDS = ["all_students", "asian", "black_african_american", "hispanic_latino_of_any_race", "white", "two_or_more_races",
+                     ["american_indian_alaskan_native", "native_hawaiian_pacific"], "low_income", "female", "male",
+                     "students_with_disabilities", "english_language_learners", "gender_x"]
 GRADES = ["PK", "0K"] + [f"{n:02d}" for n in range(1, 13)]
 
 
@@ -139,6 +150,35 @@ def results(link):
     return out
 
 
+def enrollment(link):
+    """Who goes to each school, matched on the state's school id like results(): (district row, {school id: row})."""
+    q = urllib.parse.urlencode({"$where": "districtcode='17001' AND gradelevel='All Grades'", "$limit": 5000})
+    rows = json.loads(get(f"{ENROLLMENT}?{q}"))
+    by_state = {v["state"]: k for k, v in link.items()}
+
+    def row(r):
+        try:
+            return [sum(int(r[x]) for x in ([f] if isinstance(f, str) else f)) for f in ENROLLMENT_FIELDS]
+        except (KeyError, ValueError):
+            return None  # a count the state holds back
+
+    district, out, held = None, {}, []
+    for r in rows:
+        if r["schoolyear"] != ENROLLMENT_YEAR:
+            raise SystemExit(f"enrollment is for {r['schoolyear']}, not {ENROLLMENT_YEAR}: point ENROLLMENT at that year's dataset")
+        if r["organizationlevel"] == "District":
+            district = row(r)
+        elif r["organizationlevel"] == "School" and r.get("schoolorganizationid") in by_state:
+            v = row(r)
+            if v and v[0]:
+                out[by_state[r["schoolorganizationid"]]] = v
+            else:
+                held.append(r["schoolname"])
+    if held:
+        print("enrollment: counts held back for " + "; ".join(sorted(held)))
+    return district, dict(sorted(out.items(), key=lambda kv: int(kv[0])))
+
+
 def save(name, obj):
     path = os.path.join(DATA, name)
     with open(path, "w", encoding="utf-8") as f:
@@ -192,6 +232,9 @@ def main():
     res = results(link)
     save("results.json", {"year": RESULTS_YEAR, "source": "Washington State Report Card (OSPI)", "schools": res})
     on_map = set().union(*zoned.values()) | {r[0] for rows in opt.values() for r in rows}
+    district, enr = enrollment(link)
+    save("enrollment.json", {"year": ENROLLMENT_YEAR, "source": "Washington State Report Card (OSPI)", "district": district, "schools": enr})
+    print("on the map without enrollment: " + ("; ".join(sorted(sites[k]["n"] for k in on_map - set(enr))) or "none"))
     print("on the map without results: " + "; ".join(sorted(sites[k]["n"] for k in on_map - set(res))))
 
     save("geo_zones.json", {lv: [{"type": "Feature", "properties": {"id": str(f["properties"]["GEO_ID"]), "name": f["properties"]["GEOZONE"]},

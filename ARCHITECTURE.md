@@ -9,6 +9,7 @@ template's NYC-only code is switched off rather than removed.
 **New or rewritten**
 
 - `scripts/fetch_seattle.py`: all the data, from Seattle Public Schools' ArcGIS services, its school directory and the state's Report Card data. `links()` reads each school's profile page on seattleschools.org for the district's id and the state's id (both are in the page's own links), so `results()` matches test results by id, not by name.
+- Demographics: `fetch_seattle.py` `enrollment()` writes `data/enrollment.json` (counts per school and for the district, matched by the state id), `build.py` turns it into the template's `DM`/`DMC` rows, and the NYC card code shows it: `demoSec` (the "Demographics" section, now with the district as the comparison column, and girls, boys and the state's gender X as a row each) and `dmEnroll` (the student count under the school's name). `DEMO_GROUPS` in `settings.py` has six groups here; the last one is left out of the section's one-line summary.
 - School links: `LK` (`{school id: [profile page, state id]}`, from `data/school_links.json`), `profileUrl()`, `CITY.schoolPage` and `CITY.reportCard`. The card's school name and its first two links use them.
 - `scripts/build.py`: only the generic parts of the NYC build (`prepare_zones`, `fill_settings`, `head_tags`, `write_page`) plus a short `main()`. `option_rows()` writes option schools as `NZ` rows; a Highly Capable school carries the flag NYC used for citywide G&T (`o.gt`, the star marker).
 - `CITY` (top of the template's script): map center, `hsTests` (high schools use test scores, not graduation and SAT), `pages` (no school pages), the address lookup link, the geocoder and its bounding box.
@@ -20,7 +21,7 @@ template's NYC-only code is switched off rather than removed.
 - Link hashes take any numeric id (`#es-201`).
 - `booted`: a zoom during startup no longer calls `restyle` before it exists (this surfaced when the first `fitBounds` changed the zoom).
 
-**Still in the template, switched off** (hidden controls, empty data): quality ratings (`R`, `rateSec`), programs and Color by G&T / dual language / pre-K / special ed / screened, admissions (`P`, `KP`, `A`, `admSec`, `esAdmHtml`), charters (`CH`, `CHX`, `chBlock`), districts (`DIST`, `buildDistricts`, `distPage`), high school outcomes (`O`, `Q`, `outSec`), demographics, class size, building use, co-location, accessibility, our own street layers (`ST`, `LS`), shared-zone notes (`zoneKind`, `kindText`), `pageUrl`. `settings.py` keeps the NYC labels these read.
+**Still in the template, switched off** (hidden controls, empty data): quality ratings (`R`, `rateSec`), programs and Color by G&T / dual language / pre-K / special ed / screened, admissions (`P`, `KP`, `A`, `admSec`, `esAdmHtml`), charters (`CH`, `CHX`, `chBlock`), districts (`DIST`, `buildDistricts`, `distPage`), high school outcomes (`O`, `Q`, `outSec`), class size, building use, co-location, accessibility, our own street layers (`ST`, `LS`), shared-zone notes (`zoneKind`, `kindText`), `pageUrl`. `settings.py` keeps the NYC labels these read.
 
 **Removed**: `pages.py`, `neighborhoods.py`, `fetch_data.py`, `streets.py`, `release.sh`, `scripts/browser/`, the release workflow, the school, district and neighborhood pages, the sitemap, and all NYC data.
 

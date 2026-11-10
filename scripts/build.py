@@ -13,7 +13,8 @@ Steps:
   2. Give each zone a "neighbor color" so adjacent zones differ, a label point inside the zone, and an
      approximate area.
   3. Add the option schools (data/option_schools.json) as schools without a zone, their GeoZones
-     (data/geo_zones.json), each school's links (data/school_links.json) and the school results (data/results.json) when that file is there.
+     (data/geo_zones.json), each school's links (data/school_links.json), who goes there
+     (data/enrollment.json) and the school results (data/results.json) when that file is there.
   4. Inline the elementary data into the template and write index.html; middle and high school go to assets/.
 """
 import collections
@@ -219,6 +220,18 @@ def main(standalone_path=None):
     on_map = set(d["schools"]) | set(d["MS"]["schools"]) | set(d["HS"]["schools"]) | set(d["G"])
     d["LK"] = {k: [v["page"], v["state"]] for k, v in link.items() if k in on_map}
     print("no school page link: " + (", ".join(sorted(names.get(k, k) for k in on_map - set(link))) or "none"))
+    # DM: who goes to each school on the map (data/enrollment.json, the state's Report Card enrollment data):
+    # {school id: [students, counts in settings.DEMO_GROUPS order, % low-income, girls, boys, students with
+    # disabilities, English learners, gender X]}; DMC the same row for the whole district
+    if os.path.exists(os.path.join(DATA, "enrollment.json")):
+        enr = load("enrollment.json")
+        if enr["year"].replace("-", "–") != settings.DEMOGRAPHICS_LABEL:
+            raise SystemExit(f"enrollment.json is {enr['year']}, settings.DEMOGRAPHICS_LABEL says {settings.DEMOGRAPHICS_LABEL}")
+        k = len(settings.DEMO_GROUPS)
+        dm = lambda r: r[:1 + k] + [round(100 * r[1 + k] / r[0])] + r[2 + k:]
+        d["DM"] = {sid: dm(r) for sid, r in enr["schools"].items() if sid in on_map}
+        d["DMC"] = dm(enr["district"])
+        print("no enrollment: " + (", ".join(sorted(names.get(x, x) for x in on_map - set(d["DM"]))) or "none"))
     # GZ: option schools' GeoZones, {school id: [polygon, ...]}, for every level (a K-8's is the same at both)
     gz = load("geo_zones.json") if os.path.exists(os.path.join(DATA, "geo_zones.json")) else {}
     known = {r[0] for rows in option.values() for r in rows}
