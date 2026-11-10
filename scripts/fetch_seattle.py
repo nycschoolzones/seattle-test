@@ -9,9 +9,12 @@ ArcGIS services, no key) and write them in the shapes scripts/build.py reads:
       {"es" / "ms" / "hs": [[id, name, address, lat, lon, kind]]}   schools without an attendance area
   data/geo_zones.json
       {"es" / "hs": [{"properties": {"id", "name"}, "geometry"}]}   the area with priority at an option school
+  data/school_links.json
+      {id: {"page": the school's profile page under seattleschools.org/schools/, "state": the state's school id}}
   data/results.json
       {"year", "schools": {id: [ELA tested, ELA met standard, math tested, math met standard]}}
-      Smarter Balanced results, all grades, from the state's Report Card data (data.wa.gov, no key)
+      Smarter Balanced results, all grades, from the state's Report Card data (data.wa.gov, no key),
+      matched to the district's schools by the state id in school_links.json
 
 School ids are the district's own numbers ("201"); the code calls them dbns, the name left from the NYC site.
 
@@ -20,6 +23,7 @@ School ids are the district's own numbers ("201"); the code calls them dbns, the
 import json
 import os
 import re
+import time
 import urllib.parse
 import urllib.request
 
@@ -38,8 +42,8 @@ OPTION = {"Option ELEM": "option", "Option HS": "option", "Option K-12": "option
 # Washington State Report Card assessment data for RESULTS_YEAR (data.wa.gov; each school year is its own dataset)
 RESULTS = "https://data.wa.gov/resource/fusr-6kv7.json"
 RESULTS_YEAR = "2025-26"
-# state names the district's sites file words differently: state name (after name_key) -> sites name (after name_key)
-ALIASES = {"frantz coe": "coe", "edmonds s meany": "meany", "stephen decatur": "decatur"}
+# the district's school directory: one profile page per school under it
+DIRECTORY = "https://www.seattleschools.org/schools/"
 GRADES = ["PK", "0K"] + [f"{n:02d}" for n in range(1, 13)]
 
 
@@ -78,47 +82,60 @@ def grade_list(span):
     return ",".join(GRADES[i:j + 1])
 
 
-def name_key(n, level=False):
-    """A school's name without the words the district and the state add differently. level=True keeps
-    "elementary", "middle" and "high", for the names that differ only by them (West Seattle)."""
-    n = n.lower().replace("int'l", "international").replace("&", "and")
-    n = re.sub(r"[^a-z0-9 ]", " ", n)
-    drop = {"school", "k", "5", "8", "12", "international", "stem", "at", "the", "pk", "ms", "hs"}
-    if not level:
-        drop |= {"elementary", "middle", "high"}
-    return " ".join(w for w in n.split() if w not in drop)
+def get(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (school zone map data refresh)"})
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return r.read().decode("utf-8", "replace")
+        except OSError:
+            if attempt == 2:
+                raise
+            time.sleep(2)
 
 
-def results(sites):
+def links():
+    """Each school's profile page on the district's site: {school id: {"page": its address under DIRECTORY, "state":
+    the state's id for the school}}. Both ids are in the page's own links (its dashboard and its state report card),
+    so nothing is matched by name. A page without exactly one of each (Interagency, the Skills Center) is left out."""
+    slugs = sorted(set(re.findall(r'href="(?:https://www\.seattleschools\.org)?/schools/([a-z0-9-]+)/"', get(DIRECTORY))) - {"feed"})
+    out, skipped = {}, []
+    for slug in slugs:
+        h = get(f"{DIRECTORY}{slug}/")
+        ids = set(re.findall(r"embedpbi\.seattleschools\.org/\?id=(\d+)", h))
+        state = set(re.findall(r"ReportCard/ViewSchoolOrDistrict/(\d+)", h))
+        if len(ids) != 1 or len(state) != 1 or min(ids) in out:
+            skipped.append(slug)
+            continue
+        out[min(ids)] = {"page": slug, "state": min(state)}
+    print(f"school pages: {len(out)} of {len(slugs)}; skipped: " + (", ".join(skipped) or "none"))
+    return dict(sorted(out.items(), key=lambda kv: int(kv[0])))
+
+
+def results(link):
+    """Test results per school id, matched on the state's school id from the school's profile page (links())."""
     q = urllib.parse.urlencode({"$where": "districtcode='17001' AND organizationlevel='School' AND studentgroup='All Students' "
                                           "AND gradelevel='All Grades' AND testadministration='SBAC'", "$limit": 5000})
-    with urllib.request.urlopen(f"{RESULTS}?{q}", timeout=120) as r:
-        rows = json.load(r)
-    by_name = {}
-    for sid, s in sites.items():
-        by_name.setdefault(name_key(s["n"]), set()).add(sid)
-        by_name.setdefault(name_key(s["n"], True), set()).add(sid)
+    rows = json.loads(get(f"{RESULTS}?{q}"))
+    by_state = {v["state"]: k for k, v in link.items()}
     out, missed = {}, set()
     for r in rows:
         if r["schoolyear"] != RESULTS_YEAR:
             raise SystemExit(f"results are for {r['schoolyear']}, not {RESULTS_YEAR}: point RESULTS at that year's dataset")
-        k = name_key(r["schoolname"])
-        ids = by_name.get(ALIASES.get(k, k), [])
-        if len(ids) != 1:
-            ids = by_name.get(name_key(r["schoolname"], True), [])
-        if len(ids) != 1:
+        sid = by_state.get(r["schoolorganizationid"])
+        if not sid:
             missed.add(r["schoolname"])
             continue
         try:
             tested, met = int(r["count_of_students_tested"]), int(r["count_consistent_grade_level"])
         except (KeyError, ValueError):
-            continue  # numbers the state holds back for small groups
-        row = out.setdefault(min(ids), [None] * 4)
+            continue  # numbers the state holds back
+        row = out.setdefault(sid, [None] * 4)
         i = {"ELA": 0, "Math": 2}[r["testsubject"]]
         row[i], row[i + 1] = tested, met
     out = {k: v for k, v in sorted(out.items()) if None not in v}
     if missed:
-        print(f"results: no single school in the sites file for {len(missed)}: " + "; ".join(sorted(missed)))
+        print(f"results: no school page with the state's id for {len(missed)}: " + "; ".join(sorted(missed)))
     return out
 
 
@@ -170,7 +187,9 @@ def main():
                   if s["status"] not in OPTION and not any(sid in z for z in zoned.values()))
     print(f"not on the map ({len(left)}): " + "; ".join(left))
 
-    res = results(sites)
+    link = links()
+    save("school_links.json", link)
+    res = results(link)
     save("results.json", {"year": RESULTS_YEAR, "source": "Washington State Report Card (OSPI)", "schools": res})
     on_map = set().union(*zoned.values()) | {r[0] for rows in opt.values() for r in rows}
     print("on the map without results: " + "; ".join(sorted(sites[k]["n"] for k in on_map - set(res))))

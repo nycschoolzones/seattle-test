@@ -568,7 +568,9 @@ const D=JSON.parse(document.getElementById('zdata').textContent);
 // What differs from city to city, in one place. The NYC code this map came from had these spread through the file.
 const CITY={center:[47.61,-122.33],zoom:11,
   hsTests:true,      // high schools are colored by state tests too (NYC used graduation and SAT there)
-  pages:false,       // no page per school yet, so the card's school name isn't a link
+  pages:false,       // no page of our own per school; the card links to the district's (schoolPage) instead
+  schoolPage:'https://www.seattleschools.org/schools/',schoolPageName:'seattleschools.org',
+  reportCard:'https://reportcard.ospi.k12.wa.us/ReportCard/ViewSchoolOrDistrict/',
   find:'https://www.seattleschools.org/enroll/find-your-school/',findName:'the district’s Address Lookup',
   // King County's address locator (free, no key): one request per search, no separate autocomplete
   geocoder:'https://gismaps.kingcounty.gov/arcgis/rest/services/Address/Composite_locator/GeocodeServer/findAddressCandidates',
@@ -1055,6 +1057,9 @@ const nzGroup=L.layerGroup().addTo(map);let nzSel=null;
 // Option schools' GeoZones (D.GZ, {school id: [polygon, ...]}): living in one is a tiebreaker at that school. The
 // selected option school's is drawn as a dashed outline; it doesn't take clicks, so the zones under it still do.
 const GZ=D.GZ||{};let geoLine=null;
+// LK: {school id: [the school's page under CITY.schoolPage, the state's id for CITY.reportCard]}
+const LK=D.LK||{};
+const profileUrl=d=>LK[d]?CITY.schoolPage+encodeURIComponent(LK[d][0])+'/':'';
 const gzGeom=d=>({type:'MultiPolygon',coordinates:GZ[d]});
 function syncGeo(){if(geoLine){map.removeLayer(geoLine);geoLine=null}if(!nzSel||!GZ[nzSel])return;
   geoLine=L.geoJSON({type:'Feature',properties:{},geometry:gzGeom(nzSel)},{style:{renderer:selRend,interactive:false,color:css('--sel'),weight:3,opacity:1,dashArray:'7 6',lineJoin:'round',fill:true,fillColor:css('--sel'),fillOpacity:.1}}).addTo(map)}
@@ -1330,7 +1335,7 @@ function jumpLine(d,noJump){if(noJump||CHX[d])return '';const lv=level,o=nzGet(d
 function jumpLink(d){const pg=level==='es'?(KP[d]?'priority groups':'kindergarten admissions'):msProgs(d,level).length?'priority groups':'admissions';
   return '<a href="#" class="to-adm" data-d="'+esc(d)+'">See this school’s '+pg+' ↓</a>'}
 function schoolBlock(d,noJump){const s=S[d],e=dmEnroll(d),n=e!=null?e.toLocaleString()+' students':'',gs=G[d]||(s&&s.g),gr=gs?'Grades '+esc(grades(gs,d)):'',ch=!!CHX[d];
-  return '<div class="school" data-d="'+esc(d)+'"><span class="nm">'+(CITY.pages?'<a class="nm-link" href="'+pageUrl(d)+'#'+level+'">'+esc(short(d))+'</a>':esc(short(d)))+'</span>'+addrHtml(d)+(gr||n?'<span class="meta">'+[gr,n].filter(Boolean).join(' · ')+'</span>':'')+tagsHtml(d)+(level==='hs'?zonedHtml(d):'')+jumpLine(d,noJump)+'<hr class="sep">'+rateSec(d)+(level==='hs'&&!CITY.hsTests?outSec(d):testSec(d))+(level==='es'?esAdmHtml(d):admSec(d)+cutSec(d)+(msProgs(d,level).length?'':progSec(d))+exSec(d))+(factsHtml(d)?sec('facts','<span class="st">School details</span>',factsHtml(d)):'')+demoSec(d)+'<hr class="sep">'+'<div class="links">'+'<a href="https://www.seattleschools.org/enroll/find-your-school/school-choice/" target="_blank" rel="noopener"><b>Open Enrollment for School Choice ↗</b></a></div></div>'}
+  return '<div class="school" data-d="'+esc(d)+'"><span class="nm">'+(CITY.pages?'<a class="nm-link" href="'+pageUrl(d)+'#'+level+'">'+esc(short(d))+'</a>':profileUrl(d)?'<a class="nm-link" href="'+profileUrl(d)+'" target="_blank" rel="noopener">'+esc(short(d))+'</a>':esc(short(d)))+'</span>'+addrHtml(d)+(gr||n?'<span class="meta">'+[gr,n].filter(Boolean).join(' · ')+'</span>':'')+tagsHtml(d)+(level==='hs'?zonedHtml(d):'')+jumpLine(d,noJump)+'<hr class="sep">'+rateSec(d)+(level==='hs'&&!CITY.hsTests?outSec(d):testSec(d))+(level==='es'?esAdmHtml(d):admSec(d)+cutSec(d)+(msProgs(d,level).length?'':progSec(d))+exSec(d))+(factsHtml(d)?sec('facts','<span class="st">School details</span>',factsHtml(d)):'')+demoSec(d)+'<hr class="sep">'+'<div class="links">'+(profileUrl(d)?'<a href="'+profileUrl(d)+'" target="_blank" rel="noopener"><b>School profile on '+CITY.schoolPageName+' ↗</b></a><a href="'+CITY.reportCard+esc(LK[d][1])+'" target="_blank" rel="noopener">Washington State Report Card ↗</a>':'')+'<a href="https://www.seattleschools.org/enroll/find-your-school/school-choice/" target="_blank" rel="noopener">Open Enrollment for School Choice ↗</a></div></div>'}
 // the school's Snapshot report with the card's other links, as under "Overall rating" (rateSec), when it has ratings
 function snapLink(d){const r=R[d];if(!r||r.slice(2,5).every(x=>x==null))return '';
   return '<a href="https://tools.nycenet.edu/snapshot/__SNAPSHOT_YEAR__/'+esc(d)+'/'+esc(r[5]||'EMS')+'/" target="_blank" rel="noopener">__SNAPSHOT__ School Quality Snapshot ↗</a>'}

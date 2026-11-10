@@ -8,7 +8,8 @@ template's NYC-only code is switched off rather than removed.
 
 **New or rewritten**
 
-- `scripts/fetch_seattle.py`: all the data, from Seattle Public Schools' ArcGIS services and the state's Report Card data. `name_key()`/`ALIASES` match schools between the two by name.
+- `scripts/fetch_seattle.py`: all the data, from Seattle Public Schools' ArcGIS services, its school directory and the state's Report Card data. `links()` reads each school's profile page on seattleschools.org for the district's id and the state's id (both are in the page's own links), so `results()` matches test results by id, not by name.
+- School links: `LK` (`{school id: [profile page, state id]}`, from `data/school_links.json`), `profileUrl()`, `CITY.schoolPage` and `CITY.reportCard`. The card's school name and its first two links use them.
 - `scripts/build.py`: only the generic parts of the NYC build (`prepare_zones`, `fill_settings`, `head_tags`, `write_page`) plus a short `main()`. `option_rows()` writes option schools as `NZ` rows; a Highly Capable school carries the flag NYC used for citywide G&T (`o.gt`, the star marker).
 - `CITY` (top of the template's script): map center, `hsTests` (high schools use test scores, not graduation and SAT), `pages` (no school pages), the address lookup link, the geocoder and its bounding box.
 - Basemap: King County's street tiles, one layer with the labels in it. Dark mode is a CSS filter (`.base-tiles`). `labelTiles` is an empty layer and `syncParks` does nothing, so the callers didn't have to change.

@@ -13,7 +13,7 @@ Steps:
   2. Give each zone a "neighbor color" so adjacent zones differ, a label point inside the zone, and an
      approximate area.
   3. Add the option schools (data/option_schools.json) as schools without a zone, their GeoZones
-     (data/geo_zones.json) and the school results (data/results.json) when that file is there.
+     (data/geo_zones.json), each school's links (data/school_links.json) and the school results (data/results.json) when that file is there.
   4. Inline the elementary data into the template and write index.html; middle and high school go to assets/.
 """
 import collections
@@ -210,6 +210,15 @@ def main(standalone_path=None):
     # grades for the schools the zone files don't carry (the option schools)
     d["G"] = {r[0]: r[6] for rows in option.values() for r in rows}
     d["ST"], d["LS"], d["DIST"] = [], {"n": [], "l": []}, {}
+    # LK: links for each school on the map, {school id: [its page under the district's school directory, the
+    # state's id for its report card]} (data/school_links.json)
+    link = load("school_links.json") if os.path.exists(os.path.join(DATA, "school_links.json")) else {}
+    names = {r[0]: r[1] for rows in option.values() for r in rows}
+    for x in (d, d["MS"], d["HS"]):
+        names.update({k: v["n"] for k, v in x["schools"].items()})
+    on_map = set(d["schools"]) | set(d["MS"]["schools"]) | set(d["HS"]["schools"]) | set(d["G"])
+    d["LK"] = {k: [v["page"], v["state"]] for k, v in link.items() if k in on_map}
+    print("no school page link: " + (", ".join(sorted(names.get(k, k) for k in on_map - set(link))) or "none"))
     # GZ: option schools' GeoZones, {school id: [polygon, ...]}, for every level (a K-8's is the same at both)
     gz = load("geo_zones.json") if os.path.exists(os.path.join(DATA, "geo_zones.json")) else {}
     known = {r[0] for rows in option.values() for r in rows}

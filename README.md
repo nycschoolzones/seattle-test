@@ -12,6 +12,7 @@ It is a test, not a finished site. Nothing here is checked the way the NYC map i
 - The schools without an attendance area (option schools and the two Highly Capable schools) as their own markers.
 - Each school's spring 2026 Smarter Balanced ELA and math results, as the Color by modes and on the card.
 - Each option school's GeoZone (the area whose residents get a tiebreaker there): outlined when you open the school, and listed on a zone's card for the spot you clicked or the address you searched.
+- Links from each school's card to its profile on seattleschools.org and its Washington State Report Card.
 - Address search for Seattle.
 
 Not here yet: a page per school, enrollment and demographics, and anything about how School Choice works beyond a link to the district.
@@ -36,6 +37,7 @@ scripts/settings.py        the data year labels and color ramps the build fills 
 data/elem_zones.json       attendance areas and their schools, one file per level (ms_zones.json, hs_zones.json)
 data/option_schools.json   schools without an attendance area, per level
 data/geo_zones.json        option schools' GeoZones
+data/school_links.json     each school's profile page on seattleschools.org and its state id
 data/results.json          state test results per school
 index.html, assets/        built output, committed so the page can be served as-is
 brand/, icons/, preview.png, scripts/make_brand.py, scripts/make_preview.py   still the NYC site's
@@ -47,13 +49,14 @@ ARCHITECTURE.md            the NYC code map, with a section on what changed here
 | What | Source |
 | - | - |
 | Attendance areas, GeoZones, school sites | Seattle Public Schools' public ArcGIS services (`services2.arcgis.com/I7NQBinfvOmxQbXs`) |
+| School profile pages | Seattle Public Schools' [school directory](https://www.seattleschools.org/schools/) |
 | Test results | Washington State Report Card assessment data, 2025-26 ([data.wa.gov](https://data.wa.gov/)) |
 | Basemap tiles and address search | King County GIS (`gismaps.kingcounty.gov`) |
 
-Schools are matched between the district's and the state's files by name (`name_key` and `ALIASES` in
-`fetch_seattle.py`); the fetch prints the ones it couldn't match. The state holds back counts for three schools on the
-map (Cascadia, Decatur, The Center School), and Cascade Virtual Option isn't in its file under that name, so those four
-have no results.
+Each school's profile page links to its district dashboard and its state report card, so it carries both the
+district's id and the state's. `fetch_seattle.py` reads them there (`links()`) and matches test results by id. The
+state holds back counts for three schools on the map (Cascadia, Decatur, The Center School). Cascade Virtual Option
+has no link or results: the district's page for it carries the Cascade Parent Partnership's ids.
 
 ## License
 

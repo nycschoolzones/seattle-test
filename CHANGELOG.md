@@ -10,6 +10,7 @@ What changed in each version of [nycschoolzones.com](https://nycschoolzones.com)
 
 ### Added
 
+- Each school's card links to its profile on seattleschools.org (the school's name links there too) and to its Washington State Report Card.
 - Option schools now show their GeoZone, the area whose residents get a tiebreaker when they apply: open an option school and its GeoZone is outlined with a dashed line. Click any block, or search an address, and the card lists the option schools whose GeoZone covers that spot.
 - A first Seattle test of the map: Seattle Public Schools' elementary, middle and high school attendance areas (2025-26), the option schools, and each school's spring 2026 state test results, with address search for Seattle. The NYC ratings, admissions, charter schools, districts and school pages are switched off or removed.
 
