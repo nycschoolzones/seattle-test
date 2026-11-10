@@ -23,7 +23,9 @@ template's NYC-only code is switched off rather than removed.
 
 **Removed**: `pages.py`, `neighborhoods.py`, `fetch_data.py`, `streets.py`, `release.sh`, `scripts/browser/`, the release workflow, the school, district and neighborhood pages, the sitemap, and all NYC data.
 
-**Not done**: `data/geo_zones.json` is downloaded but not drawn. `brand/`, `icons/` and `preview.png` are the NYC site's.
+- Option schools' GeoZones: `GZ` (`{school id: [polygon, ...]}`, from `data/geo_zones.json`), `syncGeo()` (called from `buildNZ`; draws the selected option school's as a dashed outline in the selection pane, and `selectNZ` fits the map to it when the school is opened from a link, a list or search) and `geoHere()` (the zone card's list of option schools whose GeoZone covers the clicked spot or the searched address; `select()` gets the spot as `ll`).
+
+**Not done**: `brand/`, `icons/` and `preview.png` are the NYC site's.
 
 Where things live, so you can find them without reading all of `src/template.html`. Names below are functions and
 constants to search for. Line numbers drift, so search by name instead. Keep this file current (see AGENTS.md).

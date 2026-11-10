@@ -687,7 +687,7 @@ regNZ(NZ_ES);
   if(x.R)Object.entries(x.R).forEach(([k,v])=>{if(!R[k])R[k]=v});if(x.X)Object.entries(x.X).forEach(([k,v])=>{if(!X[k])X[k]=v});regNZ(LV[lv].NZ)});
 function nzDistricts(o){const ds=o.pd.length?o.pd:[+o.d.slice(0,2)];return ds}
 function nzKind(o){return o.gt?'Highly capable school':'Option school'}
-function nzPriority(o){return o.gt?'A school for students the district has identified for Highly Capable services.':'Families apply through Open Enrollment for School Choice. Seats depend on space; living in the school’s GeoZone is one of the tiebreakers.'}
+function nzPriority(o){return o.gt?'A school for students the district has identified for Highly Capable services.':'Families apply through Open Enrollment for School Choice. Seats depend on space.'+(GZ[o.d]?' Living in the school’s GeoZone, the dashed outline on the map, is one of the tiebreakers.':'')}
 function nzDemand(o){if(o.ms||o.hs){const ok=o.pr.filter(p=>p[2]!=null&&p[1]!=='D75'&&p[1]!=='ASD');if(!ok.length)return '';const st=ok.reduce((a,p)=>a+p[2],0),ap=ok.reduce((a,p)=>a+p[3],0);return (o.pr.length>1?o.pr.length+' programs · ':'')+st+' general-ed seats · '+ap+' applicants, __MYSCHOOLS__'}
   const g=o.pr.find(p=>!p[1])||o.pr[0];if(!g||g[2]==null)return '';return g[2]+' seats · '+g[3]+' applicants last year'+(g[4]?' · all seats filled':'')}
 function nzOptions(dist,skip,open){if(!dist)return '';const hs=level==='hs';
@@ -1052,6 +1052,16 @@ map.on('zoomend',()=>{if(LAY.dist&&distLines.length){buildDistricts();drawDistNu
 // non-zoned schools: small diamonds in the current color, drawn above the zone dots
 map.createPane('nzPane').style.zIndex=462;
 const nzGroup=L.layerGroup().addTo(map);let nzSel=null;
+// Option schools' GeoZones (D.GZ, {school id: [polygon, ...]}): living in one is a tiebreaker at that school. The
+// selected option school's is drawn as a dashed outline; it doesn't take clicks, so the zones under it still do.
+const GZ=D.GZ||{};let geoLine=null;
+const gzGeom=d=>({type:'MultiPolygon',coordinates:GZ[d]});
+function syncGeo(){if(geoLine){map.removeLayer(geoLine);geoLine=null}if(!nzSel||!GZ[nzSel])return;
+  geoLine=L.geoJSON({type:'Feature',properties:{},geometry:gzGeom(nzSel)},{style:{renderer:selRend,interactive:false,color:css('--sel'),weight:3,opacity:1,dashArray:'7 6',lineJoin:'round',fill:true,fillColor:css('--sel'),fillOpacity:.1}}).addTo(map)}
+// the option schools at this level whose GeoZone covers a point, as a list on the zone card
+function geoHere(a,b){const l=NZ.filter(o=>GZ[o.d]&&inGeom(b,a,gzGeom(o.d)));if(!l.length)return '';
+  return '<details class="opts" data-sec="opts-gz" open><summary>In the GeoZone for '+(l.length>1?l.length+' option schools':'1 option school')+'</summary><p class="opts-note">Living in an option school’s GeoZone is one of the tiebreakers when you apply there.</p><ul>'+
+    l.map(o=>'<li><button type="button" data-nz="'+esc(o.d)+'"><span class="on">'+esc(o.n)+'<small>Option school'+(G[o.d]?' · grades '+esc(grades(G[o.d])):'')+'</small></span></button></li>').join('')+'</ul></details>'}
 const nzKey=o=>o.ch?'ch':o.gt?'gt':'nz';
 function nzShown(o){return o.lat!=null&&LAY[nzKey(o)]}  // a virtual school has no point, so no marker
 function nzWanted(){return NZ.length>0&&(LAY.nz||LAY.gt||LAY.ch)}
@@ -1081,7 +1091,7 @@ function setOutline(){map.getContainer().style.setProperty('--ow',outlineScale()
 map.on('zoomend',setOutline);setOutline();
 function markerScale(){return Math.min(1,Math.max(.5,.5+(map.getZoom()-12)*.25))}
 function nzSize(){const z=map.getZoom();return (z<11.5?8:z<12.5?10:z<13.5?13:z<14.5?16:20)*markerScale()}
-function buildNZ(){nzGroup.clearLayers();document.getElementById('nz-key').hidden=!nzOn();buildZS();document.getElementById('nz-key').hidden=!nzOn()&&!zsOn();document.getElementById('zsk-item').hidden=!zsOn();document.getElementById('nzk-item').hidden=!(nzOn()&&LAY.nz);document.getElementById('gtk-item').hidden=!(nzOn()&&LAY.gt&&NZ.some(o=>o.gt));document.getElementById('chk-item').hidden=!(nzOn()&&LAY.ch&&NZ.some(o=>o.ch));if(!nzWanted())return;const sz=nzSize(),near=markersByZoom();
+function buildNZ(){nzGroup.clearLayers();syncGeo();document.getElementById('nz-key').hidden=!nzOn();buildZS();document.getElementById('nz-key').hidden=!nzOn()&&!zsOn();document.getElementById('zsk-item').hidden=!zsOn();document.getElementById('nzk-item').hidden=!(nzOn()&&LAY.nz);document.getElementById('gtk-item').hidden=!(nzOn()&&LAY.gt&&NZ.some(o=>o.gt));document.getElementById('chk-item').hidden=!(nzOn()&&LAY.ch&&NZ.some(o=>o.ch));if(!nzWanted())return;const sz=nzSize(),near=markersByZoom();
   const groups={};NZ.forEach(o=>{if(nzShown(o)&&(near||nzSel===o.d))(groups[nzSpot(o)]=groups[nzSpot(o)]||[]).push(o)});
   NZ.forEach(o=>{if(!nzShown(o)||!near&&nzSel!==o.d)return;const b=nzSize()*(o.gt?STAR_SIZE:NZ_SIZE),sz=nzSel===o.d?selSize(b):b;
     const g=groups[nzSpot(o)],i=g.indexOf(o),r=g.length>1&&map.getZoom()>=12?nzSize()*.75+g.length*1.5:0,ang=2*Math.PI*i/g.length-Math.PI/2,dy=r*Math.sin(ang),
@@ -1109,7 +1119,8 @@ function selectNZ(d,fromClick,back){const o=nzGet(d);if(!o)return;markEngaged();
   document.getElementById('copy-link').onclick=e=>copyLink(e.currentTarget,pageLink(d));
   document.getElementById('to-map').onclick=()=>{if(phone.matches)setSheet(false);else document.getElementById('map').scrollIntoView({behavior:'smooth',block:'start'})};
   const ll=o.lat==null?null:L.latLng(o.lat,o.lon);
-  if(phone.matches){const ae=document.activeElement;if(ae&&ae.tagName==='INPUT')ae.blur();setPop('search',false);sheetLabel(o.n,nzKind(o));setSheet(true);aside.scrollTo({top:0});if(!fromClick&&ll)showLatLng(ll,15)}
+  if(phone.matches){const ae=document.activeElement;if(ae&&ae.tagName==='INPUT')ae.blur();setPop('search',false);sheetLabel(o.n,nzKind(o));setSheet(true);aside.scrollTo({top:0});if(!fromClick&&geoLine)map.fitBounds(geoLine.getBounds(),{maxZoom:15,paddingTopLeft:[30,70],paddingBottomRight:[30,aside.offsetHeight+30]});else if(!fromClick&&ll)showLatLng(ll,15)}
+  else if(!fromClick&&geoLine)map.fitBounds(geoLine.getBounds(),{maxZoom:15,padding:[30,30]});
   else if(!fromClick&&ll)map.setView(ll,Math.max(map.getZoom(),15))}
 // the "other options" lists on a zone card or a non-zoned school's card open a non-zoned school
 document.getElementById('card').addEventListener('click',e=>{const b=e.target.closest('button[data-nz]');if(!b)return;
@@ -1350,6 +1361,9 @@ function select(l,fromClick,ll){
     h+='<a class="confirm" href="'+CITY.find+'" target="_blank" rel="noopener">Confirm your exact address with '+CITY.findName+' ↗</a>';
     h+='<div class="card-actions"><button type="button" class="btn-sm" id="copy-link">Copy link to '+(p.dbns.length>1?'these schools':'this school')+'</button><button type="button" class="btn-sm to-map" id="to-map">↑ Back to map</button></div>';
     const opts=level==='es'||level==='ms'?nzOptions(+p.dist,p.dbns):'';h+=(opts||'<hr class="sep">')+chOptions(+p.dist);
+    // the clicked spot, or the searched address when it's in this zone
+    const pt=ll?[ll.lat,ll.lng]:lastPoint&&inGeom(lastPoint.b,lastPoint.a,l.feature.geometry)?[lastPoint.a,lastPoint.b]:null;
+    if(pt)h+=geoHere(pt[0],pt[1]);
     if(p.dist&&+p.dist)h+=distPage(+p.dist)}
   if(p.remarks&&!/^Citywide High School Choice$/i.test(p.remarks))h+='<div class="note">'+esc(p.remarks)+'</div>';
 

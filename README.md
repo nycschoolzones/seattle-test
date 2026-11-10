@@ -11,10 +11,10 @@ It is a test, not a finished site. Nothing here is checked the way the NYC map i
 - Elementary, middle and high school attendance areas for 2025-26.
 - The schools without an attendance area (option schools and the two Highly Capable schools) as their own markers.
 - Each school's spring 2026 Smarter Balanced ELA and math results, as the Color by modes and on the card.
+- Each option school's GeoZone (the area whose residents get a tiebreaker there): outlined when you open the school, and listed on a zone's card for the spot you clicked or the address you searched.
 - Address search for Seattle.
 
-Not here yet: a page per school, the option schools' GeoZone outlines (downloaded, not drawn), enrollment and
-demographics, and anything about how School Choice works beyond a link to the district.
+Not here yet: a page per school, enrollment and demographics, and anything about how School Choice works beyond a link to the district.
 
 ## Build
 
@@ -35,7 +35,7 @@ scripts/build.py           data + template -> index.html, assets/ms.js, assets/h
 scripts/settings.py        the data year labels and color ramps the build fills into the template
 data/elem_zones.json       attendance areas and their schools, one file per level (ms_zones.json, hs_zones.json)
 data/option_schools.json   schools without an attendance area, per level
-data/geo_zones.json        option schools' GeoZones (not drawn yet)
+data/geo_zones.json        option schools' GeoZones
 data/results.json          state test results per school
 index.html, assets/        built output, committed so the page can be served as-is
 brand/, icons/, preview.png, scripts/make_brand.py, scripts/make_preview.py   still the NYC site's

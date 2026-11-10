@@ -12,8 +12,8 @@ Steps:
   1. Load each level's attendance areas (data/elem_zones.json, ms_zones.json, hs_zones.json).
   2. Give each zone a "neighbor color" so adjacent zones differ, a label point inside the zone, and an
      approximate area.
-  3. Add the option schools (data/option_schools.json) as schools without a zone, and the school results
-     (data/results.json) when that file is there.
+  3. Add the option schools (data/option_schools.json) as schools without a zone, their GeoZones
+     (data/geo_zones.json) and the school results (data/results.json) when that file is there.
   4. Inline the elementary data into the template and write index.html; middle and high school go to assets/.
 """
 import collections
@@ -210,6 +210,16 @@ def main(standalone_path=None):
     # grades for the schools the zone files don't carry (the option schools)
     d["G"] = {r[0]: r[6] for rows in option.values() for r in rows}
     d["ST"], d["LS"], d["DIST"] = [], {"n": [], "l": []}, {}
+    # GZ: option schools' GeoZones, {school id: [polygon, ...]}, for every level (a K-8's is the same at both)
+    gz = load("geo_zones.json") if os.path.exists(os.path.join(DATA, "geo_zones.json")) else {}
+    known = {r[0] for rows in option.values() for r in rows}
+    d["GZ"] = {}
+    for f in (f for fs in gz.values() for f in fs):
+        sid = f["properties"]["id"]
+        if sid not in known:
+            print(f"GeoZone {sid} ({f['properties']['name']}) has no option school on the map; left out")
+            continue
+        d["GZ"][sid] = polys(f["geometry"])
 
     with open(os.path.join(ROOT, "src", "template.html"), encoding="utf-8") as f:
         template = f.read()
@@ -239,6 +249,7 @@ def main(standalone_path=None):
         print(f"wrote {standalone_path} ({os.path.getsize(standalone_path) / 1e6:.2f} MB, everything inline)")
     out = os.path.join(ROOT, "index.html")
     write_page(template, d, out)
+    print(f"{len(full['GZ'])} option school GeoZones")
     for lv, x in (("elementary", full), ("middle", full["MS"]), ("high", full["HS"])):
         print(f"{lv}: {len(x['features'])} zones, {len(x['NZ'])} schools without a zone, {len(x['T'])} with results")
     print(f"wrote {out} ({os.path.getsize(out) / 1e6:.2f} MB) + " +
